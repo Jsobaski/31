@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useCallback, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { GameState, Player } from '@/lib/types';
 import {
   initGame,
@@ -181,6 +181,7 @@ export default function GameBoard({ playerName, numBots, onExit }: Props) {
   const [game, setGame] = useState<GameState>(() => initGame(playerName, numBots));
   const [showResults, setShowResults] = useState(false);
   const [botThinking, setBotThinking] = useState(false);
+  const [drawAnim, setDrawAnim] = useState<{ cardId: string; source: 'deck' | 'discard' } | null>(null);
 
   const human = game.players[0];
   const isHumanTurn = game.currentTurnIdx === 0 && !game.roundOver && !game.gameOver;
@@ -209,6 +210,13 @@ export default function GameBoard({ playerName, numBots, onExit }: Props) {
     };
   }, [game.currentTurnIdx, game.turnPhase, game.roundOver, game.gameOver]);
 
+  // Clear draw animation after it plays
+  useEffect(() => {
+    if (!drawAnim) return;
+    const t = setTimeout(() => setDrawAnim(null), 500);
+    return () => clearTimeout(t);
+  }, [drawAnim]);
+
   // Show round results modal
   useEffect(() => {
     if (game.roundOver) {
@@ -219,12 +227,16 @@ export default function GameBoard({ playerName, numBots, onExit }: Props) {
 
   const handleDrawDeck = () => {
     if (!isHumanTurn || game.turnPhase !== 'draw') return;
-    setGame(prev => drawFromDeck(prev));
+    const next = drawFromDeck(game);
+    if (next.drawnCard) setDrawAnim({ cardId: next.drawnCard.id, source: 'deck' });
+    setGame(next);
   };
 
   const handleDrawDiscard = () => {
     if (!isHumanTurn || game.turnPhase !== 'draw') return;
-    setGame(prev => drawFromDiscard(prev));
+    const next = drawFromDiscard(game);
+    if (next.drawnCard) setDrawAnim({ cardId: next.drawnCard.id, source: 'discard' });
+    setGame(next);
   };
 
   const handleKnock = () => {
@@ -346,13 +358,20 @@ export default function GameBoard({ playerName, numBots, onExit }: Props) {
             <span className="text-white font-bold">{human.name}</span>
             {human.hasKnocked && <span className="text-yellow-400 text-sm">🤛 Knocked</span>}
             <LivesDisplay lives={human.lives} />
-            {game.roundOver && game.roundResults && (
-              <span className={`text-xl font-bold ${
-                calculateScore(human.hand) === 31 ? 'text-yellow-400' : 'text-white'
-              }`}>
-                Score: {game.roundResults.scores[human.id] ?? calculateScore(human.hand)}
-              </span>
-            )}
+            {!human.isEliminated && (() => {
+              const liveScore = game.roundOver && game.roundResults
+                ? game.roundResults.scores[human.id]
+                : calculateScore(human.hand);
+              return (
+                <span className={`text-xl font-bold tabular-nums transition-colors ${
+                  liveScore === 31 ? 'text-yellow-400' :
+                  liveScore >= 27 ? 'text-green-400' :
+                  liveScore >= 20 ? 'text-white' : 'text-gray-400'
+                }`}>
+                  {liveScore}
+                </span>
+              );
+            })()}
           </div>
 
           {/* Hand */}
@@ -363,22 +382,29 @@ export default function GameBoard({ playerName, numBots, onExit }: Props) {
               {human.hand.map(card => {
                 const isDrawnFromDiscard = game.drawnFromDiscard && game.drawnCard?.id === card.id;
                 const canDiscard = isHumanTurn && game.turnPhase === 'discard' && !isDrawnFromDiscard;
+                const isAnimCard = drawAnim?.cardId === card.id;
                 return (
-                  <CardComponent
+                  <div
                     key={card.id}
-                    card={card}
-                    size="lg"
-                    selectable={canDiscard}
-                    disabled={isHumanTurn && game.turnPhase === 'discard' && isDrawnFromDiscard}
-                    onClick={canDiscard ? () => handleDiscard(card.id) : undefined}
-                    label={
-                      isDrawnFromDiscard
-                        ? 'Just drawn — cannot discard immediately'
-                        : canDiscard
-                        ? `Discard ${cardName(card)}`
-                        : cardName(card)
-                    }
-                  />
+                    style={isAnimCard ? {
+                      animation: `${drawAnim!.source === 'deck' ? 'draw-from-deck' : 'draw-from-discard'} 0.45s ease-out forwards`,
+                    } : undefined}
+                  >
+                    <CardComponent
+                      card={card}
+                      size="lg"
+                      selectable={canDiscard}
+                      disabled={isHumanTurn && game.turnPhase === 'discard' && isDrawnFromDiscard}
+                      onClick={canDiscard ? () => handleDiscard(card.id) : undefined}
+                      label={
+                        isDrawnFromDiscard
+                          ? 'Just drawn — cannot discard immediately'
+                          : canDiscard
+                          ? `Discard ${cardName(card)}`
+                          : cardName(card)
+                      }
+                    />
+                  </div>
                 );
               })}
             </div>

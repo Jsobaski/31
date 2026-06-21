@@ -415,10 +415,9 @@ function resolveRound(
   let knockerPenalty = false;
 
   if (trigger === 'blitz') {
+    // Everyone else at the table loses a life when someone hits 31
     const blitzId = state.players[blitzIdx].id;
-    const others = active.filter(p => p.id !== blitzId);
-    const minScore = Math.min(...others.map(p => scores[p.id]));
-    loserIds = others.filter(p => scores[p.id] === minScore).map(p => p.id);
+    loserIds = active.filter(p => p.id !== blitzId).map(p => p.id);
   } else {
     const minScore = Math.min(...active.map(p => scores[p.id]));
     loserIds = active.filter(p => scores[p.id] === minScore).map(p => p.id);
