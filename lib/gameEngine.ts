@@ -251,9 +251,12 @@ export function discardCard(state: GameState, cardId: string): GameState {
 
 // ─── Bot AI ───────────────────────────────────────────────────────────────────
 
-export function executeBotTurn(state: GameState): GameState {
+// Phase 1: bot decides whether to knock, draw from discard, or draw from deck.
+// Returns state with turnPhase:'discard' (4-card hand) or, on knock, the
+// already-advanced state with the next player active.
+export function executeBotDraw(state: GameState): GameState {
   const bot = state.players[state.currentTurnIdx];
-  if (!bot.isBot || state.roundOver || state.gameOver) return state;
+  if (!bot.isBot || state.roundOver || state.gameOver || state.turnPhase !== 'draw') return state;
 
   const currentScore = calculateScore(bot.hand);
   const topDiscard = state.discardPile[state.discardPile.length - 1];
@@ -276,8 +279,7 @@ export function executeBotTurn(state: GameState): GameState {
     }
   }
 
-  // Evaluate all possible swaps: pick up discard vs pick from deck
-  let bestDiscardCardId = '';
+  // Evaluate all possible swaps to decide: discard pile or deck?
   let useDiscardPile = false;
   let bestScore = currentScore;
 
@@ -287,105 +289,99 @@ export function executeBotTurn(state: GameState): GameState {
       const s = calculateScore(sim);
       if (s > bestScore) {
         bestScore = s;
-        bestDiscardCardId = remove.id;
         useDiscardPile = true;
       }
     }
   }
-
-  let newState: GameState;
 
   if (useDiscardPile) {
     const discardPile = state.discardPile.slice(0, -1);
     const players = state.players.map((p, i) =>
       i === state.currentTurnIdx ? { ...p, hand: [...p.hand, topDiscard] } : p
     );
-    newState = {
+    return {
       ...state,
       discardPile,
       players,
       turnPhase: 'discard',
       drawnCard: topDiscard,
       drawnFromDiscard: true,
+      message: `${bot.name} took ${cardName(topDiscard)} from the discard pile.`,
     };
-  } else {
-    // Draw from deck
-    let deck = [...state.deck];
-    if (deck.length === 0) {
-      if (state.discardPile.length <= 1) return state;
-      const top = state.discardPile[state.discardPile.length - 1];
-      deck = shuffleDeck(state.discardPile.slice(0, -1));
-      newState = { ...state, deck, discardPile: [top] };
-      return executeBotTurn(newState);
-    }
-    const drawnCard = deck[deck.length - 1];
-    deck = deck.slice(0, -1);
-    const players = state.players.map((p, i) =>
-      i === state.currentTurnIdx ? { ...p, hand: [...p.hand, drawnCard] } : p
-    );
-    newState = {
-      ...state,
-      deck,
-      players,
-      turnPhase: 'discard',
-      drawnCard,
-      drawnFromDiscard: false,
-    };
-    bestDiscardCardId = ''; // will re-derive below
   }
 
-  // Now find the card to discard (maximise remaining hand score)
-  const botNow = newState.players[state.currentTurnIdx];
-  if (!bestDiscardCardId) {
-    let best = -1;
-    for (const card of botNow.hand) {
-      const remaining = botNow.hand.filter(c => c.id !== card.id);
-      const s = calculateScore(remaining);
-      if (s > best) {
-        best = s;
-        bestDiscardCardId = card.id;
-      }
-    }
+  // Draw from deck (reshuffle discard into deck if needed)
+  let deck = [...state.deck];
+  if (deck.length === 0) {
+    if (state.discardPile.length <= 1) return state;
+    const top = state.discardPile[state.discardPile.length - 1];
+    deck = shuffleDeck(state.discardPile.slice(0, -1));
+    return executeBotDraw({ ...state, deck, discardPile: [top] });
   }
+  const drawnCard = deck[deck.length - 1];
+  deck = deck.slice(0, -1);
+  const players = state.players.map((p, i) =>
+    i === state.currentTurnIdx ? { ...p, hand: [...p.hand, drawnCard] } : p
+  );
+  return {
+    ...state,
+    deck,
+    players,
+    turnPhase: 'discard',
+    drawnCard,
+    drawnFromDiscard: false,
+    message: `${bot.name} drew from the stock pile.`,
+  };
+}
 
-  // Cannot put back the just-drawn discard card
-  if (newState.drawnFromDiscard && newState.drawnCard?.id === bestDiscardCardId) {
-    let best = -1;
-    for (const card of botNow.hand) {
-      if (card.id === newState.drawnCard!.id) continue;
-      const remaining = botNow.hand.filter(c => c.id !== card.id);
-      const s = calculateScore(remaining);
-      if (s > best) {
-        best = s;
-        bestDiscardCardId = card.id;
-      }
+// Phase 2: bot picks the best card to discard from its 4-card hand.
+export function executeBotDiscard(state: GameState): GameState {
+  const bot = state.players[state.currentTurnIdx];
+  if (!bot.isBot || state.roundOver || state.gameOver || state.turnPhase !== 'discard') return state;
+
+  // Find the discard that maximises the remaining 3-card score
+  let bestDiscardId = '';
+  let best = -1;
+  for (const card of bot.hand) {
+    // Cannot immediately put back a card drawn from the discard pile
+    if (state.drawnFromDiscard && state.drawnCard?.id === card.id) continue;
+    const remaining = bot.hand.filter(c => c.id !== card.id);
+    const s = calculateScore(remaining);
+    if (s > best) {
+      best = s;
+      bestDiscardId = card.id;
     }
   }
 
-  const cardToDiscard = botNow.hand.find(c => c.id === bestDiscardCardId);
-  if (!cardToDiscard) return state;
+  // Fallback: discard first non-restricted card
+  if (!bestDiscardId) {
+    bestDiscardId = bot.hand.find(
+      c => !(state.drawnFromDiscard && state.drawnCard?.id === c.id)
+    )?.id ?? bot.hand[0].id;
+  }
 
-  const newHand = botNow.hand.filter(c => c.id !== bestDiscardCardId);
-  const discardPile = [...newState.discardPile, cardToDiscard];
-  const players = newState.players.map((p, i) =>
+  const cardToDiscard = bot.hand.find(c => c.id === bestDiscardId)!;
+  const newHand = bot.hand.filter(c => c.id !== bestDiscardId);
+  const discardPile = [...state.discardPile, cardToDiscard];
+  const players = state.players.map((p, i) =>
     i === state.currentTurnIdx ? { ...p, hand: newHand } : p
   );
 
   const afterDiscard: GameState = {
-    ...newState,
+    ...state,
     players,
     discardPile,
     drawnCard: null,
     drawnFromDiscard: false,
   };
 
-  // Instant 31
   if (calculateScore(newHand) === 31) {
     return resolveRound(afterDiscard, 'blitz', state.currentTurnIdx);
   }
 
   const nextIdx = nextActiveIdx(players, state.currentTurnIdx);
-  const knockCountdownComplete = afterDiscard.knockerIdx !== null && nextIdx === afterDiscard.knockerIdx;
+  const knockCountdownComplete =
+    afterDiscard.knockerIdx !== null && nextIdx === afterDiscard.knockerIdx;
 
   if (knockCountdownComplete) {
     return resolveRound({ ...afterDiscard, currentTurnIdx: nextIdx }, 'knock', -1);

@@ -28,6 +28,41 @@ body {
   }
 }
 
+/* Bot draw animations — cards come from below (piles are below bot zones) */
+@keyframes bot-draw-from-deck {
+  from {
+    transform: translateX(-60px) translateY(130px) rotate(-12deg) scale(0.8);
+    opacity: 0;
+    filter: drop-shadow(0 0 12px rgba(96, 165, 250, 0.9));
+  }
+  55% {
+    opacity: 1;
+    filter: drop-shadow(0 0 8px rgba(96, 165, 250, 0.5));
+  }
+  to {
+    transform: translateX(0) translateY(0) rotate(0deg) scale(1);
+    opacity: 1;
+    filter: none;
+  }
+}
+
+@keyframes bot-draw-from-discard {
+  from {
+    transform: translateX(60px) translateY(130px) rotate(12deg) scale(0.8);
+    opacity: 0;
+    filter: drop-shadow(0 0 12px rgba(251, 191, 36, 0.9));
+  }
+  55% {
+    opacity: 1;
+    filter: drop-shadow(0 0 8px rgba(251, 191, 36, 0.5));
+  }
+  to {
+    transform: translateX(0) translateY(0) rotate(0deg) scale(1);
+    opacity: 1;
+    filter: none;
+  }
+}
+
 @keyframes draw-from-discard {
   from {
     transform: translateX(70px) translateY(-160px) rotate(14deg) scale(0.8);

@@ -9,7 +9,8 @@ import {
   knock,
   discardCard,
   dealRound,
-  executeBotTurn,
+  executeBotDraw,
+  executeBotDiscard,
   calculateScore,
   cardName,
 } from '@/lib/gameEngine';
@@ -33,11 +34,12 @@ function LivesDisplay({ lives }: { lives: number }) {
   );
 }
 
-function BotPlayerArea({ player, isActive, score, showScore }: {
+function BotPlayerArea({ player, isActive, score, showScore, animSource }: {
   player: Player;
   isActive: boolean;
   score?: number;
   showScore?: boolean;
+  animSource?: 'deck' | 'discard' | null;
 }) {
   return (
     <div className={`flex flex-col items-center gap-2 p-3 rounded-xl transition-all
@@ -50,6 +52,20 @@ function BotPlayerArea({ player, isActive, score, showScore }: {
         {isActive && <span className="text-green-400 text-xs animate-pulse">●</span>}
       </div>
       <LivesDisplay lives={player.lives} />
+
+      {/* Source badge — appears briefly when bot draws */}
+      <div className="h-5 flex items-center">
+        {animSource && (
+          <span className={`text-xs font-semibold px-2 py-0.5 rounded ${
+            animSource === 'deck'
+              ? 'bg-blue-900/70 text-blue-300'
+              : 'bg-yellow-900/70 text-yellow-300'
+          }`}>
+            {animSource === 'deck' ? '📦 Stock' : '♻️ Discard'}
+          </span>
+        )}
+      </div>
+
       <div className="flex gap-1">
         {player.isEliminated ? (
           <span className="text-red-500 text-sm font-bold">ELIMINATED</span>
@@ -64,9 +80,19 @@ function BotPlayerArea({ player, isActive, score, showScore }: {
           </>
         ) : (
           <>
-            {player.hand.map(card => (
-              <CardComponent key={card.id} faceDown size="sm" />
-            ))}
+            {player.hand.map((card, idx) => {
+              const isNewCard = animSource && idx === player.hand.length - 1;
+              return (
+                <div
+                  key={card.id}
+                  style={isNewCard ? {
+                    animation: `${animSource === 'deck' ? 'bot-draw-from-deck' : 'bot-draw-from-discard'} 0.45s ease-out forwards`,
+                  } : undefined}
+                >
+                  <CardComponent faceDown size="sm" />
+                </div>
+              );
+            })}
           </>
         )}
       </div>
@@ -182,15 +208,15 @@ export default function GameBoard({ playerName, numBots, onExit }: Props) {
   const [showResults, setShowResults] = useState(false);
   const [botThinking, setBotThinking] = useState(false);
   const [drawAnim, setDrawAnim] = useState<{ cardId: string; source: 'deck' | 'discard' } | null>(null);
+  const [botDrawAnim, setBotDrawAnim] = useState<{ playerIdx: number; source: 'deck' | 'discard' } | null>(null);
 
   const human = game.players[0];
   const isHumanTurn = game.currentTurnIdx === 0 && !game.roundOver && !game.gameOver;
   const topDiscard = game.discardPile[game.discardPile.length - 1];
 
-  // Bot turn automation
+  // Bot draw phase automation
   useEffect(() => {
-    if (game.roundOver || game.gameOver) return;
-
+    if (game.roundOver || game.gameOver || game.turnPhase !== 'draw') return;
     const current = game.players[game.currentTurnIdx];
     if (!current?.isBot) return;
 
@@ -198,17 +224,47 @@ export default function GameBoard({ playerName, numBots, onExit }: Props) {
     const t = setTimeout(() => {
       setGame(prev => {
         const cp = prev.players[prev.currentTurnIdx];
-        if (!cp?.isBot || prev.roundOver || prev.gameOver) return prev;
-        return executeBotTurn(prev);
+        if (!cp?.isBot || prev.roundOver || prev.gameOver || prev.turnPhase !== 'draw') return prev;
+        return executeBotDraw(prev);
       });
       setBotThinking(false);
-    }, 900);
+    }, 800);
+    return () => { clearTimeout(t); setBotThinking(false); };
+  }, [game.currentTurnIdx, game.roundOver, game.gameOver]);
 
-    return () => {
-      clearTimeout(t);
-      setBotThinking(false);
-    };
+  // When bot transitions to discard phase, record what it drew from for the animation
+  useEffect(() => {
+    if (game.turnPhase !== 'discard' || game.roundOver) return;
+    const current = game.players[game.currentTurnIdx];
+    if (!current?.isBot || !game.drawnCard) return;
+    setBotDrawAnim({
+      playerIdx: game.currentTurnIdx,
+      source: game.drawnFromDiscard ? 'discard' : 'deck',
+    });
+  }, [game.currentTurnIdx, game.turnPhase]);
+
+  // Bot discard phase automation (fires after draw phase completes)
+  useEffect(() => {
+    if (game.roundOver || game.gameOver || game.turnPhase !== 'discard') return;
+    const current = game.players[game.currentTurnIdx];
+    if (!current?.isBot) return;
+
+    const t = setTimeout(() => {
+      setGame(prev => {
+        const cp = prev.players[prev.currentTurnIdx];
+        if (!cp?.isBot || prev.roundOver || prev.gameOver || prev.turnPhase !== 'discard') return prev;
+        return executeBotDiscard(prev);
+      });
+    }, 800);
+    return () => clearTimeout(t);
   }, [game.currentTurnIdx, game.turnPhase, game.roundOver, game.gameOver]);
+
+  // Clear bot draw animation after it finishes playing
+  useEffect(() => {
+    if (!botDrawAnim) return;
+    const t = setTimeout(() => setBotDrawAnim(null), 600);
+    return () => clearTimeout(t);
+  }, [botDrawAnim]);
 
   // Clear draw animation after it plays
   useEffect(() => {
@@ -295,6 +351,7 @@ export default function GameBoard({ playerName, numBots, onExit }: Props) {
               isActive={game.currentTurnIdx === i + 1 && !game.roundOver}
               showScore={game.roundOver}
               score={game.roundResults?.scores[bot.id]}
+              animSource={botDrawAnim?.playerIdx === i + 1 ? botDrawAnim.source : null}
             />
           ))}
         </div>
