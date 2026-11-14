@@ -16,7 +16,6 @@ export interface Player {
   isBot: boolean;
   hasKnocked: boolean;
   isEliminated: boolean;
-  shielded: boolean;
 }
 
 export interface RoundResult {
@@ -24,14 +23,6 @@ export interface RoundResult {
   knockerPenalty: boolean;
   scores: Record<string, number>;
   blitzPlayerId?: string;
-  shieldSavedIds: string[];
-}
-
-// Single-use power moves the human gets once per game.
-export interface Gambits {
-  peek: boolean;
-  shield: boolean;
-  redraw: boolean;
 }
 
 export type TurnPhase = 'draw' | 'discard';
@@ -51,6 +42,4 @@ export interface GameState {
   winnerId: string | null;
   message: string;
   roundNumber: number;
-  gambits: Gambits;
-  revealedIds: string[];
 }

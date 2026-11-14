@@ -57,7 +57,7 @@ export function cardName(card: Card): string {
 
 export function initGame(playerName: string, numBots: number): GameState {
   const players: Player[] = [
-    { id: 'p0', name: playerName || 'You', hand: [], lives: 3, isBot: false, hasKnocked: false, isEliminated: false, shielded: false },
+    { id: 'p0', name: playerName || 'You', hand: [], lives: 3, isBot: false, hasKnocked: false, isEliminated: false },
     ...Array.from({ length: numBots }, (_, i) => ({
       id: `bot${i + 1}`,
       name: `Bot ${i + 1}`,
@@ -66,7 +66,6 @@ export function initGame(playerName: string, numBots: number): GameState {
       isBot: true,
       hasKnocked: false,
       isEliminated: false,
-      shielded: false,
     })),
   ];
 
@@ -85,8 +84,6 @@ export function initGame(playerName: string, numBots: number): GameState {
     winnerId: null,
     message: '',
     roundNumber: 1,
-    gambits: { peek: true, shield: true, redraw: true },
-    revealedIds: [],
   });
 }
 
@@ -95,10 +92,10 @@ export function dealRound(state: GameState): GameState {
   let idx = 0;
 
   const players = state.players.map(p => {
-    if (p.isEliminated) return { ...p, hand: [], hasKnocked: false, shielded: false };
+    if (p.isEliminated) return { ...p, hand: [], hasKnocked: false };
     const hand = deck.slice(idx, idx + 3);
     idx += 3;
-    return { ...p, hand, hasKnocked: false, shielded: false };
+    return { ...p, hand, hasKnocked: false };
   });
 
   const discardPile = [deck[idx]];
@@ -119,7 +116,6 @@ export function dealRound(state: GameState): GameState {
     drawnCard: null,
     drawnFromDiscard: false,
     roundResults: null,
-    revealedIds: [],
     message: `Round ${state.roundNumber}. ${players[startIdx].name}'s turn to draw.`,
   };
 }
@@ -250,75 +246,6 @@ export function discardCard(state: GameState, cardId: string): GameState {
     currentTurnIdx: nextIdx,
     turnPhase: 'draw',
     message: `${players[nextIdx].name}'s turn to draw.`,
-  };
-}
-
-// ─── Gambits (single-use power moves, human only) ─────────────────────────────
-
-function humanCanAct(state: GameState, phase: 'draw' | 'discard'): boolean {
-  return (
-    !state.roundOver && !state.gameOver &&
-    state.currentTurnIdx === 0 && state.turnPhase === phase &&
-    !state.players[0].isEliminated
-  );
-}
-
-// PEEK: expose one random hidden opponent card until the round ends.
-export function castPeek(state: GameState): GameState {
-  if (!state.gambits.peek || !humanCanAct(state, 'draw')) return state;
-  const hidden = state.players
-    .filter(p => p.isBot && !p.isEliminated)
-    .flatMap(p => p.hand.filter(c => !state.revealedIds.includes(c.id)).map(c => ({ p, c })));
-  if (hidden.length === 0) return { ...state, message: 'Nothing left to peek at!' };
-  const { p, c } = hidden[Math.floor(Math.random() * hidden.length)];
-  return {
-    ...state,
-    gambits: { ...state.gambits, peek: false },
-    revealedIds: [...state.revealedIds, c.id],
-    message: `🔍 Peek: ${p.name} is holding ${cardName(c)}.`,
-  };
-}
-
-// SHIELD: if you lose this round, you lose no lives. Spent whether or not it's needed.
-export function castShield(state: GameState): GameState {
-  if (!state.gambits.shield || !humanCanAct(state, 'draw') || state.players[0].shielded) return state;
-  return {
-    ...state,
-    gambits: { ...state.gambits, shield: false },
-    players: state.players.map((p, i) => (i === 0 ? { ...p, shielded: true } : p)),
-    message: '🛡️ Shield up — you cannot lose lives this round.',
-  };
-}
-
-// REDRAW: after drawing from the stock, bin that card and draw a fresh one.
-export function castRedraw(state: GameState): GameState {
-  if (!state.gambits.redraw || !humanCanAct(state, 'discard')) return state;
-  if (state.drawnFromDiscard || !state.drawnCard) return state;
-
-  let deck = [...state.deck];
-  let pile = [...state.discardPile];
-  if (deck.length === 0) {
-    if (pile.length <= 1) return { ...state, message: 'No cards left to redraw!' };
-    const top = pile[pile.length - 1];
-    deck = shuffleDeck(pile.slice(0, -1));
-    pile = [top];
-  }
-  const binned = state.drawnCard;
-  const fresh = deck[deck.length - 1];
-  deck = deck.slice(0, -1);
-
-  const players = state.players.map((p, i) =>
-    i === 0 ? { ...p, hand: [...p.hand.filter(c => c.id !== binned.id), fresh] } : p
-  );
-  return {
-    ...state,
-    deck,
-    discardPile: [...pile, binned],
-    players,
-    drawnCard: fresh,
-    drawnFromDiscard: false,
-    gambits: { ...state.gambits, redraw: false },
-    message: `♻️ Redraw: binned ${cardName(binned)}, drew ${cardName(fresh)}.`,
   };
 }
 
@@ -500,12 +427,8 @@ function resolveRound(
   const knockerId =
     state.knockerIdx !== null ? state.players[state.knockerIdx].id : null;
 
-  const shieldSavedIds = state.players
-    .filter(p => p.shielded && loserIds.includes(p.id))
-    .map(p => p.id);
-
   const newPlayers = state.players.map(p => {
-    if (!loserIds.includes(p.id) || shieldSavedIds.includes(p.id)) return p;
+    if (!loserIds.includes(p.id)) return p;
     const penalty = knockerPenalty && p.id === knockerId ? 2 : 1;
     return { ...p, lives: p.lives - penalty };
   });
@@ -516,12 +439,10 @@ function resolveRound(
     loserIds,
     knockerPenalty,
     scores,
-    shieldSavedIds,
     blitzPlayerId: trigger === 'blitz' ? state.players[blitzIdx].id : undefined,
   };
 
   let message = buildRoundMessage(state.players, roundResults, state.knockerIdx);
-  if (shieldSavedIds.length > 0) message += ' 🛡️ Shield absorbed the hit!';
 
   return {
     ...state,
