@@ -49,6 +49,11 @@ export function calculateScore(hand: Card[]): number {
   return Math.max(...Object.values(suitTotals));
 }
 
+// "You's turn" reads wrong; "Your turn" for the human default name.
+function possessive(name: string): string {
+  return name === 'You' ? 'Your' : `${name}'s`;
+}
+
 export function cardName(card: Card): string {
   return `${card.value}${SUIT_SYMBOLS[card.suit]}`;
 }
@@ -116,7 +121,7 @@ export function dealRound(state: GameState): GameState {
     drawnCard: null,
     drawnFromDiscard: false,
     roundResults: null,
-    message: `Round ${state.roundNumber}. ${players[startIdx].name}'s turn to draw.`,
+    message: `Round ${state.roundNumber}. ${possessive(players[startIdx].name)} turn to draw.`,
   };
 }
 
@@ -245,7 +250,7 @@ export function discardCard(state: GameState, cardId: string): GameState {
     ...updatedState,
     currentTurnIdx: nextIdx,
     turnPhase: 'draw',
-    message: `${players[nextIdx].name}'s turn to draw.`,
+    message: `${possessive(players[nextIdx].name)} turn to draw.`,
   };
 }
 
@@ -391,7 +396,7 @@ export function executeBotDiscard(state: GameState): GameState {
     ...afterDiscard,
     currentTurnIdx: nextIdx,
     turnPhase: 'draw',
-    message: `${players[nextIdx].name}'s turn to draw.`,
+    message: `${possessive(players[nextIdx].name)} turn to draw.`,
   };
 }
 
