@@ -5,7 +5,6 @@ import { Card, GameState, Player } from '@/lib/types';
 import {
   initGame, drawFromDeck, drawFromDiscard, knock, discardCard, dealRound,
   executeBotDraw, executeBotDiscard, calculateScore, cardName,
-  castPeek, castShield, castRedraw,
 } from '@/lib/gameEngine';
 import CardComponent, { FaceDownPile } from './CardComponent';
 
@@ -51,55 +50,92 @@ function FlyingCard({ info, onComplete }: { info: FlyInfo; onComplete: () => voi
       }}
     >
       {info.faceUp
-        ? <CardComponent card={info.card} size="md" />
-        : <CardComponent faceDown  size="md" />}
+        ? <CardComponent card={info.card} size="lg" />
+        : <CardComponent faceDown size="lg" />}
     </div>
   );
+}
+
+// ─── Helpers ──────────────────────────────────────────────────────────────────
+
+// Which cards contribute to the hand's score (for highlighting).
+function scoringIds(hand: Card[]): Set<string> {
+  if (hand.length === 3 && hand.every(c => c.value === hand[0].value)) {
+    return new Set(hand.map(c => c.id));
+  }
+  const totals: Record<string, number> = {};
+  for (const c of hand) totals[c.suit] = (totals[c.suit] ?? 0) + c.points;
+  const best = Object.entries(totals).sort((x, y) => y[1] - x[1])[0]?.[0];
+  return new Set(hand.filter(c => c.suit === best).map(c => c.id));
+}
+
+// Best score reachable by taking `card` and discarding any other card.
+function bestScoreWith(hand: Card[], card: Card): number {
+  return Math.max(...hand.map(r => calculateScore([...hand.filter(c => c.id !== r.id), card])));
+}
+
+function scoreColor(s: number) {
+  return s === 31 ? 'text-[#ffe27a]' : s >= 27 ? 'text-emerald-300' : s >= 20 ? 'text-white' : 'text-white/60';
 }
 
 // ─── Subcomponents ────────────────────────────────────────────────────────────
 
 function LivesDisplay({ lives }: { lives: number }) {
-  if (lives <= 0) return <span className="text-purple-400 text-xs font-bold">FREE RIDE</span>;
+  if (lives <= 0) {
+    return (
+      <span className="px-2 py-0.5 rounded-full bg-purple-500/20 border border-purple-400/50 text-purple-200 text-[10px] font-bold tracking-widest">
+        FREE RIDE
+      </span>
+    );
+  }
   return (
-    <span className="text-red-400 text-sm">
-      {'♥'.repeat(Math.max(0, lives))}{'♡'.repeat(Math.max(0, 3 - lives))}
+    <span className="flex gap-0.5" aria-label={`${lives} lives`}>
+      {[0, 1, 2].map(i => (
+        <span key={i} className={`text-base leading-none transition-all ${i < lives ? 'text-rose-400 drop-shadow-[0_0_6px_rgba(251,113,133,0.7)]' : 'text-white/15'}`}>
+          ♥
+        </span>
+      ))}
     </span>
   );
 }
 
-function BotPlayerArea({ player, isActive, score, showScore, revealedIds }: {
-  player: Player; isActive: boolean; score?: number; showScore?: boolean; revealedIds: string[];
+function BotPlayerArea({ player, isActive, score, showScore }: {
+  player: Player; isActive: boolean; score?: number; showScore?: boolean;
 }) {
   return (
-    <div className={`flex flex-col items-center gap-2 p-3 rounded-xl transition-all
-      ${isActive ? 'bg-green-900/60 ring-2 ring-green-400' : 'bg-gray-900/40'}
-      ${player.isEliminated ? 'opacity-40' : ''}
+    <div className={`glass flex flex-col items-center gap-2 px-4 py-3 rounded-2xl transition-all duration-300
+      ${isActive ? 'turn-glow' : ''}
+      ${player.isEliminated ? 'opacity-40 grayscale' : ''}
     `}>
       <div className="flex items-center gap-2">
+        <span className={`w-7 h-7 rounded-full flex items-center justify-center text-xs font-bold card-serif border
+          ${isActive ? 'bg-[#e8c468] text-[#3b2a05] border-[#fff3c4]' : 'bg-white/10 text-white/80 border-white/20'}`}>
+          {player.name.slice(-1)}
+        </span>
         <span className="text-white font-semibold text-sm">{player.name}</span>
-        {player.hasKnocked && <span className="text-yellow-400 text-xs">🤛 Knocked</span>}
-        {isActive && <span className="text-green-400 text-xs animate-pulse">●</span>}
+        {player.hasKnocked && (
+          <span className="px-2 py-0.5 rounded-full bg-orange-500/20 border border-orange-400/60 text-orange-200 text-[10px] font-bold tracking-wider">
+            KNOCKED
+          </span>
+        )}
       </div>
       <LivesDisplay lives={player.lives} />
-      <div className="flex gap-1">
+      <div className="flex items-center gap-1 min-h-14">
         {player.isEliminated ? (
-          <span className="text-red-500 text-sm font-bold">ELIMINATED</span>
+          <span className="text-rose-400 text-xs font-bold tracking-widest">ELIMINATED</span>
         ) : showScore ? (
           <>
             {player.hand.map(c => <CardComponent key={c.id} card={c} size="sm" />)}
-            <span className="text-yellow-300 font-bold text-lg ml-1">{score}</span>
+            <span className="text-[#ffe27a] font-bold text-xl ml-1 tabular-nums">{score}</span>
           </>
         ) : (
-          player.hand.map(c =>
-            revealedIds.includes(c.id) ? (
-              <div key={c.id} className="rounded-lg ring-2 ring-cyan-400 shadow-[0_0_12px_rgba(34,211,238,0.7)]" title="Revealed by Peek">
-                <CardComponent card={c} size="sm" />
+          <div className="flex -space-x-3">
+            {player.hand.map((c, i) => (
+              <div key={c.id} style={{ transform: `rotate(${(i - (player.hand.length - 1) / 2) * 6}deg)` }}>
+                <CardComponent faceDown size="sm" />
               </div>
-            ) : (
-              <CardComponent key={c.id} faceDown size="sm" />
-            )
-          )
+            ))}
+          </div>
         )}
       </div>
     </div>
@@ -112,50 +148,55 @@ function RoundResultsModal({ state, onNextRound, onPlayAgain }: {
   const { roundResults, players, gameOver, winnerId } = state;
   if (!roundResults) return null;
   const winner = winnerId ? players.find(p => p.id === winnerId) : null;
+  const humanWon = winner?.isBot === false;
 
   return (
-    <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-4">
-      <div className="bg-gray-900 border border-gray-700 rounded-2xl p-6 max-w-2xl w-full shadow-2xl">
+    <div className="fixed inset-0 bg-black/75 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+      <div className="animate-pop glass bg-[#0c1c14]/90 rounded-3xl p-6 sm:p-8 max-w-2xl w-full max-h-[92vh] overflow-y-auto">
         {gameOver ? (
           <div className="text-center mb-6">
-            <div className="text-4xl mb-2">{winner?.isBot === false ? '🎉' : '💀'}</div>
-            <h2 className="text-3xl font-bold text-yellow-400 mb-1">
-              {winner ? `${winner.name} Wins!` : 'Game Over!'}
+            <div className="text-5xl mb-2">{humanWon ? '🏆' : '💀'}</div>
+            <h2 className="text-3xl font-black gold-text mb-1 card-serif">
+              {winner ? `${winner.name} Wins!` : 'Game Over'}
             </h2>
-            <p className="text-gray-400">The game has ended.</p>
+            <p className="text-white/50 text-sm">{humanWon ? 'Well played.' : 'Better luck next time.'}</p>
           </div>
         ) : (
-          <h2 className="text-2xl font-bold text-white mb-4 text-center">
+          <h2 className="text-2xl font-bold text-white mb-5 text-center card-serif tracking-wide">
             Round {state.roundNumber} Results
           </h2>
         )}
         {roundResults.blitzPlayerId && (
-          <div className="text-center text-yellow-300 font-bold text-lg mb-4">
-            ⚡ BLITZ! {players.find(p => p.id === roundResults.blitzPlayerId)?.name} hit 31!
+          <div className="relative overflow-hidden text-center text-[#ffe27a] font-bold text-lg mb-4 py-2 rounded-xl bg-[#e8c468]/10 border border-[#e8c468]/40">
+            <div className="absolute inset-0 shimmer" />
+            <span className="relative">⚡ BLITZ — {players.find(p => p.id === roundResults.blitzPlayerId)?.name} hit 31!</span>
           </div>
         )}
         {roundResults.knockerPenalty && (
-          <div className="text-center text-orange-400 text-sm mb-4">
-            ⚠️ The knocker had the lowest score — 2 lives lost!
+          <div className="text-center text-orange-300 text-sm mb-4 py-2 rounded-xl bg-orange-500/10 border border-orange-400/30">
+            The knocker had the lowest score — 2 lives lost.
           </div>
         )}
-        <div className="grid grid-cols-2 gap-3 mb-6">
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-6">
           {players
             .filter(p => !p.isEliminated || roundResults.scores[p.id] !== undefined)
             .map(player => {
-              const score    = roundResults.scores[player.id];
-              const isLoser  = roundResults.loserIds.includes(player.id);
+              const score     = roundResults.scores[player.id];
+              const isLoser   = roundResults.loserIds.includes(player.id);
               const isKnocker = state.knockerIdx !== null && players[state.knockerIdx]?.id === player.id;
-              const saved = roundResults.shieldSavedIds.includes(player.id);
-              const livesLost = isLoser && !saved ? (roundResults.knockerPenalty && isKnocker ? 2 : 1) : 0;
+              const livesLost = isLoser ? (roundResults.knockerPenalty && isKnocker ? 2 : 1) : 0;
+              const isBlitzer = roundResults.blitzPlayerId === player.id;
               return (
-                <div key={player.id} className={`p-3 rounded-xl border ${isLoser ? 'border-red-500 bg-red-950/50' : 'border-gray-700 bg-gray-800/50'}`}>
+                <div key={player.id} className={`p-3 rounded-2xl border ${
+                  isLoser ? 'border-rose-500/60 bg-rose-950/40'
+                  : isBlitzer ? 'border-[#e8c468]/70 bg-[#e8c468]/10'
+                  : 'border-white/10 bg-white/5'}`}>
                   <div className="flex justify-between items-center mb-2">
-                    <span className="text-white font-semibold">
+                    <span className="text-white font-semibold text-sm">
                       {player.name}
-                      {isKnocker && <span className="text-yellow-400 text-xs ml-1">(Knocked)</span>}
+                      {isKnocker && <span className="text-orange-300 text-[10px] ml-1.5 tracking-wider">KNOCKED</span>}
                     </span>
-                    <span className={`text-xl font-bold ${score === 31 ? 'text-yellow-400' : isLoser ? 'text-red-400' : 'text-green-400'}`}>
+                    <span className={`text-2xl font-black tabular-nums ${score === 31 ? 'text-[#ffe27a]' : isLoser ? 'text-rose-400' : 'text-emerald-300'}`}>
                       {score ?? '—'}
                     </span>
                   </div>
@@ -164,9 +205,8 @@ function RoundResultsModal({ state, onNextRound, onPlayAgain }: {
                   </div>
                   <div className="flex items-center justify-between">
                     <LivesDisplay lives={player.lives} />
-                    {saved && <span className="text-cyan-300 text-xs font-bold">🛡️ Shield saved you</span>}
-                    {livesLost > 0 && <span className="text-red-400 text-xs">-{livesLost} life{livesLost > 1 ? 's' : ''}</span>}
-                    {player.isEliminated && <span className="text-red-500 text-xs font-bold">ELIMINATED</span>}
+                    {livesLost > 0 && <span className="text-rose-300 text-xs font-semibold">−{livesLost} {livesLost > 1 ? 'lives' : 'life'}</span>}
+                    {player.isEliminated && <span className="text-rose-400 text-[10px] font-bold tracking-widest">ELIMINATED</span>}
                   </div>
                 </div>
               );
@@ -174,8 +214,8 @@ function RoundResultsModal({ state, onNextRound, onPlayAgain }: {
         </div>
         <div className="flex justify-center">
           {gameOver
-            ? <button onClick={onPlayAgain} className="px-8 py-3 bg-green-600 hover:bg-green-500 text-white font-bold rounded-xl transition-colors text-lg">Play Again</button>
-            : <button onClick={onNextRound} className="px-8 py-3 bg-blue-600 hover:bg-blue-500 text-white font-bold rounded-xl transition-colors text-lg">Next Round →</button>}
+            ? <button onClick={onPlayAgain} className="px-10 py-3 rounded-full font-bold text-[#3b2a05] bg-gradient-to-b from-[#fff3c4] to-[#e8c468] hover:brightness-110 active:scale-95 transition shadow-[0_8px_24px_rgba(232,196,104,0.35)]">Play Again</button>
+            : <button onClick={onNextRound} autoFocus className="px-10 py-3 rounded-full font-bold text-[#3b2a05] bg-gradient-to-b from-[#fff3c4] to-[#e8c468] hover:brightness-110 active:scale-95 transition shadow-[0_8px_24px_rgba(232,196,104,0.35)]">Next Round →</button>}
         </div>
       </div>
     </div>
@@ -189,6 +229,9 @@ export default function GameBoard({ playerName, numBots, onExit }: Props) {
   const [showResults, setShowResults] = useState(false);
   const [botThinking, setBotThinking] = useState(false);
   const [flyingCard, setFlyingCard]   = useState<FlyInfo | null>(null);
+  const [hoverId, setHoverId]         = useState<string | null>(null);
+  const [hoverDiscard, setHoverDiscard] = useState(false);
+  const [confirmKnock, setConfirmKnock] = useState(false);
 
   // Stable ref mirrors — read inside setTimeout/callbacks without stale-closure issues
   const gameRef    = useRef(game);
@@ -293,11 +336,13 @@ export default function GameBoard({ playerName, numBots, onExit }: Props) {
 
   const handleDrawDeck = () => {
     if (!isHumanTurn || game.turnPhase !== 'draw' || isAnimating) return;
+    setConfirmKnock(false);
     launchFly(drawFromDeck(game), stockRef.current, humanHandRef.current, false);
   };
 
   const handleDrawDiscard = () => {
     if (!isHumanTurn || game.turnPhase !== 'draw' || isAnimating) return;
+    setConfirmKnock(false);
     launchFly(drawFromDiscard(game), discardRef.current, humanHandRef.current, true);
   };
 
@@ -309,29 +354,6 @@ export default function GameBoard({ playerName, numBots, onExit }: Props) {
   const handleDiscard = (cardId: string) => {
     if (!isHumanTurn || game.turnPhase !== 'discard' || isAnimating) return;
     setGame(prev => discardCard(prev, cardId));
-  };
-
-  const handlePeek = () => {
-    if (!isHumanTurn || isAnimating) return;
-    setGame(prev => castPeek(prev));
-  };
-
-  const handleShield = () => {
-    if (!isHumanTurn || isAnimating) return;
-    setGame(prev => castShield(prev));
-  };
-
-  const handleRedraw = () => {
-    if (!isHumanTurn || game.turnPhase !== 'discard' || isAnimating) return;
-    const next = castRedraw(game);
-    if (next === game) return;
-    launchFly(next, stockRef.current, humanHandRef.current, false);
-  };
-
-  const runGambit = (key: 'peek' | 'shield' | 'redraw') => {
-    if (key === 'peek') handlePeek();
-    else if (key === 'shield') handleShield();
-    else handleRedraw();
   };
 
   const handleNextRound = () => {
@@ -351,32 +373,59 @@ export default function GameBoard({ playerName, numBots, onExit }: Props) {
   // While a discard-pile card is in flight, hide the source card so it doesn't appear in two places
   const hidingTopDiscard  = isAnimating && flyingCard?.faceUp;
 
+  const canDraw    = isHumanTurn && game.turnPhase === 'draw' && !isAnimating;
+  const canDiscard = isHumanTurn && game.turnPhase === 'discard' && !isAnimating;
+  const humanScore = human.isEliminated ? 0
+    : game.roundOver && game.roundResults ? game.roundResults.scores[human.id] : calculateScore(human.hand);
+  const lit        = scoringIds(human.hand);
+  const hoverCard  = hoverId ? human.hand.find(c => c.id === hoverId) : undefined;
+  const discardPreview = canDiscard && hoverCard && !(game.drawnFromDiscard && game.drawnCard?.id === hoverCard.id)
+    ? calculateScore(human.hand.filter(c => c.id !== hoverCard.id)) : null;
+  const takePreview = canDraw && hoverDiscard && topDiscard ? bestScoreWith(human.hand, topDiscard) : null;
+
+  // Keyboard shortcuts: D stock · S discard pile · K knock · 1-4 discard · Esc cancel
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (showResults || e.metaKey || e.ctrlKey || e.altKey) return;
+      const k = e.key.toLowerCase();
+      if (k === 'escape') { setConfirmKnock(false); return; }
+      if (canDraw && k === 'd') handleDrawDeck();
+      else if (canDraw && k === 's') handleDrawDiscard();
+      else if (canDraw && k === 'k' && game.knockerIdx === null) setConfirmKnock(c => !c);
+      else if (canDraw && k === 'enter' && confirmKnock) { setConfirmKnock(false); handleKnock(); }
+      else if (canDiscard && /^[1-9]$/.test(k)) {
+        const card = human.hand[Number(k) - 1];
+        if (card) handleDiscard(card.id);
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  });
+
   // ── Render ─────────────────────────────────────────────────────────────────
 
   return (
-    <div className="min-h-screen bg-green-950 flex flex-col">
+    <div className="felt min-h-screen flex flex-col overflow-hidden">
 
       {/* Header */}
-      <div className="flex items-center justify-between px-6 py-3 bg-black/30">
-        <h1 className="text-yellow-400 font-bold text-xl tracking-wider">THIRTY-ONE</h1>
-        <div className="flex items-center gap-4">
-          <span className="text-gray-400 text-sm">Round {game.roundNumber}</span>
-          {!game.roundOver && (
-            <span className="text-gray-300 text-sm">
-              {botThinking ? `${currentPlayerName} is thinking…` : `${currentPlayerName}'s turn`}
-            </span>
-          )}
-          <button onClick={onExit} className="px-3 py-1 text-gray-400 hover:text-white text-sm border border-gray-600 hover:border-gray-400 rounded transition-colors">
+      <header className="flex items-center justify-between px-4 sm:px-8 py-3 bg-black/35 backdrop-blur border-b border-[#e8c468]/20">
+        <div className="flex items-baseline gap-3">
+          <h1 className="gold-text font-black text-2xl tracking-[0.25em] card-serif">31</h1>
+          <span className="text-white/40 text-xs uppercase tracking-[0.25em] hidden sm:inline">Thirty-One</span>
+        </div>
+        <div className="flex items-center gap-3 sm:gap-5">
+          <span className="text-white/50 text-xs uppercase tracking-widest">Round {game.roundNumber}</span>
+          <button onClick={onExit} className="px-3 py-1 text-white/60 hover:text-white text-xs uppercase tracking-widest border border-white/20 hover:border-white/50 rounded-full transition-colors">
             Exit
           </button>
         </div>
-      </div>
+      </header>
 
       {/* Board */}
-      <div className="flex-1 flex flex-col items-center justify-between p-4 gap-4 max-w-4xl mx-auto w-full">
+      <main className="flex-1 flex flex-col items-center justify-between p-4 gap-4 max-w-4xl mx-auto w-full">
 
         {/* Bot zones */}
-        <div className={`flex gap-4 w-full justify-center ${bots.length === 1 ? 'max-w-xs' : ''}`}>
+        <div className={`flex flex-wrap gap-3 sm:gap-5 w-full justify-center ${bots.length === 1 ? 'max-w-xs' : ''}`}>
           {bots.map((bot, i) => (
             <div key={bot.id} ref={el => { botAreaRefs.current[i] = el; }}>
               <BotPlayerArea
@@ -384,144 +433,178 @@ export default function GameBoard({ playerName, numBots, onExit }: Props) {
                 isActive={game.currentTurnIdx === i + 1 && !game.roundOver}
                 showScore={game.roundOver}
                 score={game.roundResults?.scores[bot.id]}
-                revealedIds={game.revealedIds}
               />
             </div>
           ))}
         </div>
 
-        {/* Centre: piles + message */}
-        <div className="flex flex-col items-center gap-4">
-          <div className="px-4 py-2 bg-black/50 rounded-lg text-center min-w-64 max-w-sm">
-            <p className="text-gray-200 text-sm">{game.message}</p>
+        {/* Centre: status + piles */}
+        <div className="flex flex-col items-center gap-5">
+          <div
+            key={game.message}
+            className="animate-pop glass px-5 py-2 rounded-full text-center max-w-md"
+            aria-live="polite"
+          >
+            <p className="text-white/90 text-sm">
+              {botThinking && !game.roundOver ? `${currentPlayerName} is thinking…` : game.message}
+            </p>
           </div>
 
-          <div className="flex items-end gap-8">
-            {/* Stock pile */}
-            <div ref={stockRef}>
+          <div className="flex items-end gap-8 sm:gap-12">
+            <div ref={stockRef} className="relative">
               <FaceDownPile
                 count={game.deck.length}
                 label="Stock"
-                onClick={isHumanTurn && game.turnPhase === 'draw' && !isAnimating ? handleDrawDeck : undefined}
+                highlight={canDraw}
+                onClick={canDraw ? handleDrawDeck : undefined}
               />
             </div>
 
-            {/* Discard pile — hide the top card while it's flying */}
-            <div ref={discardRef} className="flex flex-col items-center gap-1">
-              {!hidingTopDiscard && topDiscard ? (
-                <div
-                  className={`transition-all duration-150 ${
-                    isHumanTurn && game.turnPhase === 'draw' && !isAnimating
-                      ? 'cursor-pointer hover:-translate-y-1 hover:shadow-xl ring-2 ring-transparent hover:ring-yellow-400 rounded-lg'
-                      : ''
-                  }`}
-                  onClick={isHumanTurn && game.turnPhase === 'draw' && !isAnimating ? handleDrawDiscard : undefined}
-                  title="Draw from discard pile"
-                >
-                  <CardComponent card={topDiscard} size="lg" />
-                </div>
-              ) : (
-                <div className={`w-16 h-24 rounded-lg border-2 border-dashed flex items-center justify-center ${
-                  hidingTopDiscard ? 'border-yellow-700/40' : 'border-gray-600'
-                }`}>
-                  {!hidingTopDiscard && <span className="text-gray-500 text-xs">Empty</span>}
-                </div>
-              )}
-              <span className="text-gray-400 text-xs">Discard</span>
+            <div ref={discardRef} className="relative flex flex-col items-center gap-2">
+              <div className="w-[4.5rem] h-[6.5rem] sm:w-20 sm:h-28 relative">
+                {!hidingTopDiscard && topDiscard ? (
+                  <div
+                    className={`transition-all duration-200 rounded-xl ${
+                      canDraw ? 'cursor-pointer hover:-translate-y-2 ring-2 ring-[#e8c468] shadow-[0_0_22px_rgba(232,196,104,0.5)]' : ''
+                    }`}
+                    onClick={canDraw ? handleDrawDiscard : undefined}
+                    onMouseEnter={() => setHoverDiscard(true)}
+                    onMouseLeave={() => setHoverDiscard(false)}
+                    title="Take the top discard"
+                  >
+                    <CardComponent card={topDiscard} size="lg" />
+                  </div>
+                ) : (
+                  <div className={`w-full h-full rounded-xl border-2 border-dashed flex items-center justify-center ${
+                    hidingTopDiscard ? 'border-[#e8c468]/30' : 'border-white/20'
+                  }`}>
+                    {!hidingTopDiscard && <span className="text-white/30 text-xs">Empty</span>}
+                  </div>
+                )}
+                {takePreview !== null && (
+                  <div className="animate-pop absolute -top-9 left-1/2 -translate-x-1/2 whitespace-nowrap px-2.5 py-1 rounded-full bg-black/80 border border-[#e8c468]/50 text-xs text-[#ffe27a] font-semibold">
+                    Take → up to {takePreview}
+                  </div>
+                )}
+              </div>
+              <span className="text-[11px] uppercase tracking-[0.2em] text-white/50">Discard</span>
             </div>
           </div>
-
-          {isHumanTurn && game.turnPhase === 'draw' && game.knockerIdx === null && !isAnimating && (
-            <button onClick={handleKnock} className="px-5 py-2 bg-orange-700 hover:bg-orange-600 text-white font-bold rounded-xl transition-colors shadow-lg text-sm">
-              🤛 Knock
-            </button>
-          )}
         </div>
 
         {/* Human player zone */}
-        <div className={`w-full flex flex-col items-center gap-3 p-4 rounded-2xl transition-all
-          ${isHumanTurn ? 'bg-green-900/60 ring-2 ring-green-400' : 'bg-gray-900/40'}
+        <section className={`glass w-full flex flex-col items-center gap-3 p-4 sm:p-5 rounded-3xl transition-all duration-300
+          ${isHumanTurn ? 'turn-glow' : ''}
           ${human.isEliminated ? 'opacity-50' : ''}
         `}>
-          <div className="flex items-center gap-3">
-            <span className="text-white font-bold">{human.name}</span>
-            {human.hasKnocked && <span className="text-yellow-400 text-sm">🤛 Knocked</span>}
+          <div className="flex flex-wrap items-center justify-center gap-x-4 gap-y-1">
+            <span className="text-white font-bold card-serif text-lg">{human.name}</span>
+            {human.hasKnocked && (
+              <span className="px-2 py-0.5 rounded-full bg-orange-500/20 border border-orange-400/60 text-orange-200 text-[10px] font-bold tracking-wider">KNOCKED</span>
+            )}
             <LivesDisplay lives={human.lives} />
-            {!human.isEliminated && (() => {
-              const s = game.roundOver && game.roundResults
-                ? game.roundResults.scores[human.id]
-                : calculateScore(human.hand);
-              return (
-                <span className={`text-xl font-bold tabular-nums ${
-                  s === 31 ? 'text-yellow-400' : s >= 27 ? 'text-green-400' : s >= 20 ? 'text-white' : 'text-gray-400'
-                }`}>{s}</span>
-              );
-            })()}
+            {!human.isEliminated && (
+              <div className="flex items-center gap-2">
+                <span key={humanScore} className={`score-bump text-3xl font-black tabular-nums card-serif ${scoreColor(humanScore)}`}>
+                  {humanScore}
+                </span>
+                {/* Progress toward 31 */}
+                <div className="w-20 sm:w-28 h-1.5 rounded-full bg-white/10 overflow-hidden" aria-hidden>
+                  <div
+                    className={`h-full rounded-full transition-all duration-500 ${humanScore === 31 ? 'bg-[#ffe27a]' : humanScore >= 27 ? 'bg-emerald-400' : 'bg-white/50'}`}
+                    style={{ width: `${Math.min(100, (humanScore / 31) * 100)}%` }}
+                  />
+                </div>
+              </div>
+            )}
           </div>
 
           {human.isEliminated ? (
-            <span className="text-red-500 font-bold text-lg">ELIMINATED</span>
+            <span className="text-rose-400 font-bold text-lg">ELIMINATED</span>
           ) : (
-            <div ref={humanHandRef} className="flex gap-2">
-              {human.hand.map(card => {
-                const isDrawnFromDiscard = game.drawnFromDiscard && game.drawnCard?.id === card.id;
-                const canDiscard = isHumanTurn && game.turnPhase === 'discard' && !isDrawnFromDiscard && !isAnimating;
-                return (
-                  <CardComponent
-                    key={card.id}
-                    card={card}
-                    size="lg"
-                    selectable={canDiscard}
-                    disabled={isHumanTurn && game.turnPhase === 'discard' && isDrawnFromDiscard}
-                    onClick={canDiscard ? () => handleDiscard(card.id) : undefined}
-                    label={
-                      isDrawnFromDiscard ? 'Just drawn — cannot discard immediately' :
-                      canDiscard ? `Discard ${cardName(card)}` : cardName(card)
-                    }
-                  />
-                );
-              })}
-            </div>
-          )}
+            <>
+              {/* Hover preview */}
+              <div className="h-6 flex items-center">
+                {discardPreview !== null && hoverCard && (
+                  <span className="animate-pop text-xs text-white/80 px-3 py-0.5 rounded-full bg-black/50 border border-white/15">
+                    Discard {cardName(hoverCard)} → score <b className={scoreColor(discardPreview)}>{discardPreview}</b>
+                  </span>
+                )}
+              </div>
 
-          {isHumanTurn && game.turnPhase === 'discard' && !isAnimating && (
-            <p className="text-green-300 text-xs animate-pulse">Click a card to discard it</p>
-          )}
-          {isHumanTurn && game.turnPhase === 'draw' && !isAnimating && (
-            <p className="text-blue-300 text-xs animate-pulse">Draw from stock, discard pile, or knock</p>
-          )}
+              <div ref={humanHandRef} className="flex gap-2 sm:gap-3 justify-center min-h-28">
+                {human.hand.map((card, i) => {
+                  const isDrawnFromDiscard = game.drawnFromDiscard && game.drawnCard?.id === card.id;
+                  const canPick = canDiscard && !isDrawnFromDiscard;
+                  const showLit = !game.roundOver && human.hand.length >= 3;
+                  return (
+                    <div key={card.id} className="relative">
+                      <CardComponent
+                        card={card}
+                        size="lg"
+                        animateIn
+                        dealIndex={i}
+                        selectable={canPick}
+                        disabled={canDiscard && isDrawnFromDiscard}
+                        scoring={showLit && lit.has(card.id) && humanScore >= 20}
+                        dimmed={showLit && !lit.has(card.id)}
+                        onClick={canPick ? () => handleDiscard(card.id) : undefined}
+                        onMouseEnter={() => setHoverId(card.id)}
+                        onMouseLeave={() => setHoverId(null)}
+                        label={
+                          isDrawnFromDiscard && canDiscard ? 'Just drawn from the discard — cannot discard immediately' :
+                          canPick ? `Discard ${cardName(card)}` : cardName(card)
+                        }
+                      />
+                      {canDiscard && (
+                        <span className="hidden sm:block absolute -bottom-5 left-1/2 -translate-x-1/2 text-[10px] text-white/30">{i + 1}</span>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
 
-          {!human.isEliminated && !game.gameOver && (
-            <div className="flex items-center gap-2 pt-1 border-t border-white/10 w-full justify-center">
-              <span className="text-gray-500 text-[10px] uppercase tracking-widest mr-1">Gambits</span>
-              {([
-                { key: 'peek',   icon: '🔍', name: 'Peek',   tip: 'Reveal a random opponent card for this round',       on: game.gambits.peek   && isHumanTurn && game.turnPhase === 'draw',    act: handlePeek,   color: 'cyan' },
-                { key: 'shield', icon: '🛡️', name: 'Shield', tip: 'Lose no lives if you lose this round (spent either way)', on: game.gambits.shield && isHumanTurn && game.turnPhase === 'draw' && !human.shielded },
-                { key: 'redraw', icon: '♻️', name: 'Redraw', tip: 'Bin the card you just drew from stock and draw again', on: game.gambits.redraw && isHumanTurn && game.turnPhase === 'discard' && !game.drawnFromDiscard },
-              ] as const).map(g => {
-                const left = game.gambits[g.key];
-                const active = g.key === 'shield' && human.shielded;
-                return (
-                  <button
-                    key={g.key}
-                    onClick={g.on && !isAnimating ? () => runGambit(g.key) : undefined}
-                    disabled={!g.on || isAnimating}
-                    title={left ? g.tip : active ? 'Shield is active this round' : 'Already used this game'}
-                    className={`px-3 py-1 rounded-lg text-xs font-bold border transition-all ${
-                      active ? 'border-sky-300 bg-sky-500/30 text-sky-100 animate-pulse'
-                      : g.on && !isAnimating ? 'border-white/40 bg-white/10 text-white hover:bg-white/20 hover:-translate-y-0.5 shadow-lg'
-                      : left ? 'border-white/10 text-gray-400'
-                      : 'border-white/5 text-gray-600 line-through'
-                    }`}
-                  >
-                    {g.icon} {g.name}{active ? ' · ACTIVE' : ''}
-                  </button>
-                );
-              })}
-            </div>
+              {/* Turn guide + actions */}
+              <div className="flex flex-wrap items-center justify-center gap-3 mt-2">
+                <div className="flex items-center gap-1.5 text-[11px] uppercase tracking-widest">
+                  {(['draw', 'discard'] as const).map((phase, i) => {
+                    const on = isHumanTurn && game.turnPhase === phase;
+                    return (
+                      <span key={phase} className="flex items-center gap-1.5">
+                        {i > 0 && <span className="text-white/20">→</span>}
+                        <span className={`px-3 py-1 rounded-full border transition-all ${
+                          on ? 'bg-[#e8c468] text-[#3b2a05] border-[#fff3c4] font-bold' : 'border-white/15 text-white/35'}`}>
+                          {i + 1}. {phase}
+                        </span>
+                      </span>
+                    );
+                  })}
+                </div>
+
+                {canDraw && game.knockerIdx === null && (
+                  confirmKnock ? (
+                    <div className="animate-pop flex items-center gap-2 pl-3 pr-1 py-1 rounded-full bg-orange-500/15 border border-orange-400/60">
+                      <span className="text-orange-100 text-xs">Knock at <b>{humanScore}</b>?</span>
+                      <button onClick={() => { setConfirmKnock(false); handleKnock(); }} className="px-3 py-1 rounded-full bg-orange-500 hover:bg-orange-400 text-white text-xs font-bold transition">Confirm</button>
+                      <button onClick={() => setConfirmKnock(false)} className="px-2 py-1 text-white/60 hover:text-white text-xs transition">Cancel</button>
+                    </div>
+                  ) : (
+                    <button onClick={() => setConfirmKnock(true)} className="px-5 py-1.5 rounded-full bg-gradient-to-b from-orange-400 to-orange-600 hover:brightness-110 active:scale-95 text-white font-bold text-sm tracking-wide transition shadow-[0_6px_18px_rgba(234,88,12,0.4)]">
+                      ✊ Knock
+                    </button>
+                  )
+                )}
+              </div>
+
+              <p className="text-white/40 text-xs h-4">
+                {canDraw ? 'Draw from the stock or discard pile — or knock.'
+                  : canDiscard ? 'Choose a card to discard.'
+                  : isHumanTurn || game.roundOver ? '' : `Waiting for ${currentPlayerName}…`}
+              </p>
+            </>
           )}
-        </div>
-      </div>
+        </section>
+      </main>
 
       {/* Flying card overlay — rendered outside the board flow so z-index works */}
       {flyingCard && <FlyingCard info={flyingCard} onComplete={handleFlyComplete} />}

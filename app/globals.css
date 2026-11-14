@@ -1,13 +1,113 @@
 @import "tailwindcss";
 
 :root {
-  --background: #052e16;
+  --background: #072a1a;
   --foreground: #f0fdf4;
+  --gold: #e8c468;
+  --gold-deep: #b8913a;
+  --felt-light: #1d7048;
+  --felt-mid: #0f4a2f;
+  --felt-dark: #061f14;
 }
 
 body {
   background: var(--background);
   color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  font-family: var(--font-geist-sans), Arial, Helvetica, sans-serif;
 }
 
+/* Casino felt: soft spotlight, vignette, fine weave texture */
+.felt {
+  background:
+    radial-gradient(ellipse 80% 60% at 50% 38%, rgba(255, 255, 255, 0.07), transparent 70%),
+    radial-gradient(ellipse at 50% 35%, var(--felt-light) 0%, var(--felt-mid) 48%, var(--felt-dark) 100%);
+  position: relative;
+}
+.felt::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background-image:
+    repeating-linear-gradient(45deg, rgba(0, 0, 0, 0.05) 0 1px, transparent 1px 3px),
+    repeating-linear-gradient(-45deg, rgba(255, 255, 255, 0.025) 0 1px, transparent 1px 3px);
+  mix-blend-mode: soft-light;
+}
+.felt::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  box-shadow: inset 0 0 160px 40px rgba(0, 0, 0, 0.55);
+}
+.felt > * { position: relative; z-index: 1; }
+
+.gold-text {
+  background: linear-gradient(180deg, #fff3c4 0%, var(--gold) 45%, var(--gold-deep) 100%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+
+.glass {
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.07), rgba(255, 255, 255, 0.02));
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  backdrop-filter: blur(10px);
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.35), inset 0 1px 0 rgba(255, 255, 255, 0.08);
+}
+
+/* Cards */
+.card-face {
+  background: linear-gradient(160deg, #fffefa 0%, #f6f0e2 100%);
+  box-shadow:
+    0 1px 0 rgba(255, 255, 255, 0.9) inset,
+    0 6px 14px rgba(0, 0, 0, 0.38),
+    0 1px 3px rgba(0, 0, 0, 0.5);
+}
+.card-back {
+  background:
+    repeating-linear-gradient(45deg, rgba(232, 196, 104, 0.16) 0 2px, transparent 2px 9px),
+    repeating-linear-gradient(-45deg, rgba(232, 196, 104, 0.16) 0 2px, transparent 2px 9px),
+    linear-gradient(160deg, #24357a 0%, #14204d 100%);
+  box-shadow: 0 6px 14px rgba(0, 0, 0, 0.45), 0 1px 3px rgba(0, 0, 0, 0.5);
+}
+.card-serif { font-family: Georgia, "Times New Roman", serif; }
+
+@keyframes deal-in {
+  from { opacity: 0; transform: translateY(-40px) scale(0.85) rotate(-6deg); }
+  to   { opacity: 1; transform: none; }
+}
+.animate-deal { animation: deal-in 0.45s cubic-bezier(0.22, 1, 0.36, 1) both; }
+
+@keyframes pop-in {
+  from { opacity: 0; transform: translateY(14px) scale(0.96); }
+  to   { opacity: 1; transform: none; }
+}
+.animate-pop { animation: pop-in 0.35s cubic-bezier(0.22, 1, 0.36, 1) both; }
+
+@keyframes glow-pulse {
+  0%, 100% { box-shadow: 0 0 0 2px rgba(232, 196, 104, 0.55), 0 0 18px rgba(232, 196, 104, 0.25); }
+  50%      { box-shadow: 0 0 0 2px rgba(232, 196, 104, 0.95), 0 0 28px rgba(232, 196, 104, 0.5); }
+}
+.turn-glow { animation: glow-pulse 1.8s ease-in-out infinite; }
+
+@keyframes score-bump {
+  0% { transform: scale(1); }
+  40% { transform: scale(1.25); }
+  100% { transform: scale(1); }
+}
+.score-bump { animation: score-bump 0.35s ease-out; }
+
+@keyframes shimmer {
+  from { background-position: -200% 0; }
+  to   { background-position: 200% 0; }
+}
+.shimmer {
+  background-image: linear-gradient(110deg, transparent 30%, rgba(255, 255, 255, 0.5) 50%, transparent 70%);
+  background-size: 200% 100%;
+  animation: shimmer 2.2s linear infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .animate-deal, .animate-pop, .turn-glow, .score-bump, .shimmer { animation: none; }
+}
