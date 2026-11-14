@@ -5,6 +5,7 @@ import { Card, GameState, Player } from '@/lib/types';
 import {
   initGame, drawFromDeck, drawFromDiscard, knock, discardCard, dealRound,
   executeBotDraw, executeBotDiscard, calculateScore, cardName,
+  castPeek, castShield, castRedraw,
 } from '@/lib/gameEngine';
 import CardComponent, { FaceDownPile } from './CardComponent';
 
@@ -67,8 +68,8 @@ function LivesDisplay({ lives }: { lives: number }) {
   );
 }
 
-function BotPlayerArea({ player, isActive, score, showScore }: {
-  player: Player; isActive: boolean; score?: number; showScore?: boolean;
+function BotPlayerArea({ player, isActive, score, showScore, revealedIds }: {
+  player: Player; isActive: boolean; score?: number; showScore?: boolean; revealedIds: string[];
 }) {
   return (
     <div className={`flex flex-col items-center gap-2 p-3 rounded-xl transition-all
@@ -90,7 +91,15 @@ function BotPlayerArea({ player, isActive, score, showScore }: {
             <span className="text-yellow-300 font-bold text-lg ml-1">{score}</span>
           </>
         ) : (
-          player.hand.map(c => <CardComponent key={c.id} faceDown size="sm" />)
+          player.hand.map(c =>
+            revealedIds.includes(c.id) ? (
+              <div key={c.id} className="rounded-lg ring-2 ring-cyan-400 shadow-[0_0_12px_rgba(34,211,238,0.7)]" title="Revealed by Peek">
+                <CardComponent card={c} size="sm" />
+              </div>
+            ) : (
+              <CardComponent key={c.id} faceDown size="sm" />
+            )
+          )
         )}
       </div>
     </div>
@@ -137,7 +146,8 @@ function RoundResultsModal({ state, onNextRound, onPlayAgain }: {
               const score    = roundResults.scores[player.id];
               const isLoser  = roundResults.loserIds.includes(player.id);
               const isKnocker = state.knockerIdx !== null && players[state.knockerIdx]?.id === player.id;
-              const livesLost = isLoser ? (roundResults.knockerPenalty && isKnocker ? 2 : 1) : 0;
+              const saved = roundResults.shieldSavedIds.includes(player.id);
+              const livesLost = isLoser && !saved ? (roundResults.knockerPenalty && isKnocker ? 2 : 1) : 0;
               return (
                 <div key={player.id} className={`p-3 rounded-xl border ${isLoser ? 'border-red-500 bg-red-950/50' : 'border-gray-700 bg-gray-800/50'}`}>
                   <div className="flex justify-between items-center mb-2">
@@ -154,6 +164,7 @@ function RoundResultsModal({ state, onNextRound, onPlayAgain }: {
                   </div>
                   <div className="flex items-center justify-between">
                     <LivesDisplay lives={player.lives} />
+                    {saved && <span className="text-cyan-300 text-xs font-bold">🛡️ Shield saved you</span>}
                     {livesLost > 0 && <span className="text-red-400 text-xs">-{livesLost} life{livesLost > 1 ? 's' : ''}</span>}
                     {player.isEliminated && <span className="text-red-500 text-xs font-bold">ELIMINATED</span>}
                   </div>
@@ -300,6 +311,29 @@ export default function GameBoard({ playerName, numBots, onExit }: Props) {
     setGame(prev => discardCard(prev, cardId));
   };
 
+  const handlePeek = () => {
+    if (!isHumanTurn || isAnimating) return;
+    setGame(prev => castPeek(prev));
+  };
+
+  const handleShield = () => {
+    if (!isHumanTurn || isAnimating) return;
+    setGame(prev => castShield(prev));
+  };
+
+  const handleRedraw = () => {
+    if (!isHumanTurn || game.turnPhase !== 'discard' || isAnimating) return;
+    const next = castRedraw(game);
+    if (next === game) return;
+    launchFly(next, stockRef.current, humanHandRef.current, false);
+  };
+
+  const runGambit = (key: 'peek' | 'shield' | 'redraw') => {
+    if (key === 'peek') handlePeek();
+    else if (key === 'shield') handleShield();
+    else handleRedraw();
+  };
+
   const handleNextRound = () => {
     setShowResults(false);
     setGame(prev => dealRound({ ...prev, roundNumber: prev.roundNumber + 1 }));
@@ -350,6 +384,7 @@ export default function GameBoard({ playerName, numBots, onExit }: Props) {
                 isActive={game.currentTurnIdx === i + 1 && !game.roundOver}
                 showScore={game.roundOver}
                 score={game.roundResults?.scores[bot.id]}
+                revealedIds={game.revealedIds}
               />
             </div>
           ))}
@@ -454,6 +489,36 @@ export default function GameBoard({ playerName, numBots, onExit }: Props) {
           )}
           {isHumanTurn && game.turnPhase === 'draw' && !isAnimating && (
             <p className="text-blue-300 text-xs animate-pulse">Draw from stock, discard pile, or knock</p>
+          )}
+
+          {!human.isEliminated && !game.gameOver && (
+            <div className="flex items-center gap-2 pt-1 border-t border-white/10 w-full justify-center">
+              <span className="text-gray-500 text-[10px] uppercase tracking-widest mr-1">Gambits</span>
+              {([
+                { key: 'peek',   icon: '🔍', name: 'Peek',   tip: 'Reveal a random opponent card for this round',       on: game.gambits.peek   && isHumanTurn && game.turnPhase === 'draw',    act: handlePeek,   color: 'cyan' },
+                { key: 'shield', icon: '🛡️', name: 'Shield', tip: 'Lose no lives if you lose this round (spent either way)', on: game.gambits.shield && isHumanTurn && game.turnPhase === 'draw' && !human.shielded },
+                { key: 'redraw', icon: '♻️', name: 'Redraw', tip: 'Bin the card you just drew from stock and draw again', on: game.gambits.redraw && isHumanTurn && game.turnPhase === 'discard' && !game.drawnFromDiscard },
+              ] as const).map(g => {
+                const left = game.gambits[g.key];
+                const active = g.key === 'shield' && human.shielded;
+                return (
+                  <button
+                    key={g.key}
+                    onClick={g.on && !isAnimating ? () => runGambit(g.key) : undefined}
+                    disabled={!g.on || isAnimating}
+                    title={left ? g.tip : active ? 'Shield is active this round' : 'Already used this game'}
+                    className={`px-3 py-1 rounded-lg text-xs font-bold border transition-all ${
+                      active ? 'border-sky-300 bg-sky-500/30 text-sky-100 animate-pulse'
+                      : g.on && !isAnimating ? 'border-white/40 bg-white/10 text-white hover:bg-white/20 hover:-translate-y-0.5 shadow-lg'
+                      : left ? 'border-white/10 text-gray-400'
+                      : 'border-white/5 text-gray-600 line-through'
+                    }`}
+                  >
+                    {g.icon} {g.name}{active ? ' · ACTIVE' : ''}
+                  </button>
+                );
+              })}
+            </div>
           )}
         </div>
       </div>
