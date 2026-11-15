@@ -43,3 +43,17 @@ export interface GameState {
   message: string;
   roundNumber: number;
 }
+
+/** A seat at the table when starting a game. */
+export interface Seat {
+  id: string;
+  name: string;
+  isBot: boolean;
+}
+
+/** What a player most recently did, shown as a label under their name. */
+export interface BotMove {
+  draw?: string;
+  fromStock?: boolean;
+  discard?: string;
+}

@@ -1,14 +1,26 @@
 'use client';
 
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
-import { Card, GameState, Player } from '@/lib/types';
+import { BotMove, Card, GameState, Seat } from '@/lib/types';
+import type { ClientAction, HostNet } from '@/lib/net';
 import {
-  initGame, drawFromDeck, drawFromDiscard, knock, discardCard, dealRound,
+  initGame, initGameFromSeats, takeOverWithBot, drawFromDeck, drawFromDiscard, knock, discardCard, dealRound,
   executeBotDraw, executeBotDiscard, calculateScore, cardName,
 } from '@/lib/gameEngine';
 import CardComponent, { FaceDownPile } from './CardComponent';
+import { BotPlayerArea, LivesDisplay, RoundResultsModal, bestScoreWith, scoreColor, scoringIds } from './boardParts';
 
-interface Props { playerName: string; numBots: number; onExit: () => void; }
+interface Props {
+  playerName: string;
+  numBots: number;
+  onExit: () => void;
+  /** Multiplayer: explicit seats (seat 0 is the host, who plays on this screen). */
+  seats?: Seat[];
+  /** Multiplayer: bridge that broadcasts state to friends and delivers their moves. */
+  net?: HostNet;
+  /** Multiplayer: ids of friends whose connection dropped. */
+  offlineIds?: string[];
+}
 
 // ─── Flying Card Overlay ──────────────────────────────────────────────────────
 
@@ -61,193 +73,10 @@ function FlyingCard({ info, onComplete }: { info: FlyInfo; onComplete: () => voi
   );
 }
 
-// ─── Helpers ──────────────────────────────────────────────────────────────────
-
-// Which cards contribute to the hand's score (for highlighting).
-function scoringIds(hand: Card[]): Set<string> {
-  if (hand.length === 3 && hand.every(c => c.value === hand[0].value)) {
-    return new Set(hand.map(c => c.id));
-  }
-  const totals: Record<string, number> = {};
-  for (const c of hand) totals[c.suit] = (totals[c.suit] ?? 0) + c.points;
-  const best = Object.entries(totals).sort((x, y) => y[1] - x[1])[0]?.[0];
-  return new Set(hand.filter(c => c.suit === best).map(c => c.id));
-}
-
-// Best score reachable by taking `card` and discarding any other card.
-function bestScoreWith(hand: Card[], card: Card): number {
-  return Math.max(...hand.map(r => calculateScore([...hand.filter(c => c.id !== r.id), card])));
-}
-
-function scoreColor(s: number) {
-  return s === 31 ? 'text-[#ffe27a]' : s >= 27 ? 'text-emerald-300' : s >= 20 ? 'text-white' : 'text-white/60';
-}
-
-// ─── Subcomponents ────────────────────────────────────────────────────────────
-
-function LivesDisplay({ lives }: { lives: number }) {
-  if (lives <= 0) {
-    return (
-      <span className="px-2 py-0.5 rounded-full bg-purple-500/20 border border-purple-400/50 text-purple-200 text-[10px] font-bold tracking-widest">
-        FREE RIDE
-      </span>
-    );
-  }
-  return (
-    <span className="flex gap-0.5" aria-label={`${lives} lives`}>
-      {[0, 1, 2].map(i => (
-        <span key={i} className={`text-base leading-none transition-all ${i < lives ? 'text-rose-400 drop-shadow-[0_0_6px_rgba(251,113,133,0.7)]' : 'text-white/15'}`}>
-          ♥
-        </span>
-      ))}
-    </span>
-  );
-}
-
-interface BotMove { draw?: string; fromStock?: boolean; discard?: string }
-
-function BotPlayerArea({ player, isActive, score, showScore, lastMove }: {
-  player: Player; isActive: boolean; score?: number; showScore?: boolean; lastMove?: BotMove;
-}) {
-  return (
-    <div className={`glass flex flex-col items-center gap-1.5 sm:gap-2 px-2 sm:px-4 py-2 sm:py-3 rounded-2xl transition-all duration-300
-      ${isActive ? 'turn-glow' : ''}
-      ${player.isEliminated ? 'opacity-40 grayscale' : ''}
-    `}>
-      <div className="flex items-center gap-2">
-        <span className={`hidden sm:flex w-7 h-7 rounded-full items-center justify-center text-xs font-bold card-serif border
-          ${isActive ? 'bg-[#e8c468] text-[#3b2a05] border-[#fff3c4]' : 'bg-white/10 text-white/80 border-white/20'}`}>
-          {player.name.slice(-1)}
-        </span>
-        <span className="text-white font-semibold text-sm">{player.name}</span>
-        {player.hasKnocked && (
-          <span className="px-2 py-0.5 rounded-full bg-orange-500/20 border border-orange-400/60 text-orange-200 text-[10px] font-bold tracking-wider">
-            KNOCKED
-          </span>
-        )}
-      </div>
-      <LivesDisplay lives={player.lives} />
-      {/* Persistent record of what this bot just did */}
-      <div className="h-[3.25rem] sm:h-9 w-full flex flex-col items-center justify-center gap-0.5 text-[10px] sm:text-[11px] leading-tight text-center" aria-live="polite">
-        {lastMove?.draw && (
-          <span key={lastMove.draw} className={`animate-pop px-2 py-0.5 rounded-xl sm:rounded-full border font-semibold ${
-            lastMove.fromStock
-              ? 'bg-sky-500/20 border-sky-400/50 text-sky-100'
-              : 'bg-amber-500/20 border-amber-400/50 text-amber-100'}`}>
-            {lastMove.fromStock ? '🂠 ' : ''}{lastMove.draw}
-          </span>
-        )}
-        {lastMove?.discard && <span className="animate-pop text-white/55">{lastMove.discard}</span>}
-      </div>
-      <div className="flex items-center justify-center gap-1 min-h-14 max-w-full">
-        {player.isEliminated ? (
-          <span className="text-rose-400 text-xs font-bold tracking-widest">ELIMINATED</span>
-        ) : showScore ? (
-          <>
-            {player.hand.map(c => <CardComponent key={c.id} card={c} size="sm" />)}
-            <span className="text-[#ffe27a] font-bold text-xl ml-1 tabular-nums">{score}</span>
-          </>
-        ) : (
-          <div className="flex -space-x-4 sm:-space-x-3">
-            {player.hand.map((c, i) => (
-              <div key={c.id} style={{ transform: `rotate(${(i - (player.hand.length - 1) / 2) * 6}deg)` }}>
-                <CardComponent faceDown size="sm" />
-              </div>
-            ))}
-          </div>
-        )}
-      </div>
-    </div>
-  );
-}
-
-function RoundResultsModal({ state, onNextRound, onPlayAgain }: {
-  state: GameState; onNextRound: () => void; onPlayAgain: () => void;
-}) {
-  const btnRef = useRef<HTMLButtonElement>(null);
-  // Focus for keyboard users without scrolling the panel past its title
-  useEffect(() => { btnRef.current?.focus({ preventScroll: true }); }, []);
-  const { roundResults, players, gameOver, winnerId } = state;
-  if (!roundResults) return null;
-  const winner = winnerId ? players.find(p => p.id === winnerId) : null;
-  const humanWon = winner?.isBot === false;
-
-  return (
-    <div className="fixed inset-0 bg-black/75 backdrop-blur-sm flex items-center justify-center z-50 p-4">
-      <div className="animate-pop glass bg-[#0c1c14]/90 rounded-3xl p-4 sm:p-8 max-w-2xl w-full max-h-[94dvh] overflow-y-auto">
-        {gameOver ? (
-          <div className="text-center mb-6">
-            <div className="text-5xl mb-2">{humanWon ? '🏆' : '💀'}</div>
-            <h2 className="text-3xl font-black gold-text mb-1 card-serif">
-              {winner ? `${winner.name} Wins!` : 'Game Over'}
-            </h2>
-            <p className="text-white/50 text-sm">{humanWon ? 'Well played.' : 'Better luck next time.'}</p>
-          </div>
-        ) : (
-          <h2 className="text-2xl font-bold text-white mb-5 text-center card-serif tracking-wide">
-            Round {state.roundNumber} Results
-          </h2>
-        )}
-        {roundResults.blitzPlayerId && (
-          <div className="relative overflow-hidden text-center text-[#ffe27a] font-bold text-lg mb-4 py-2 rounded-xl bg-[#e8c468]/10 border border-[#e8c468]/40">
-            <div className="absolute inset-0 shimmer" />
-            <span className="relative">⚡ BLITZ — {players.find(p => p.id === roundResults.blitzPlayerId)?.name} hit 31!</span>
-          </div>
-        )}
-        {roundResults.knockerPenalty && (
-          <div className="text-center text-orange-300 text-sm mb-4 py-2 rounded-xl bg-orange-500/10 border border-orange-400/30">
-            The knocker had the lowest score — 2 lives lost.
-          </div>
-        )}
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 sm:gap-3 mb-4 sm:mb-6">
-          {players
-            .filter(p => !p.isEliminated || roundResults.scores[p.id] !== undefined)
-            .map(player => {
-              const score     = roundResults.scores[player.id];
-              const isLoser   = roundResults.loserIds.includes(player.id);
-              const isKnocker = state.knockerIdx !== null && players[state.knockerIdx]?.id === player.id;
-              const livesLost = isLoser ? (roundResults.knockerPenalty && isKnocker ? 2 : 1) : 0;
-              const isBlitzer = roundResults.blitzPlayerId === player.id;
-              return (
-                <div key={player.id} className={`p-3 rounded-2xl border ${
-                  isLoser ? 'border-rose-500/60 bg-rose-950/40'
-                  : isBlitzer ? 'border-[#e8c468]/70 bg-[#e8c468]/10'
-                  : 'border-white/10 bg-white/5'}`}>
-                  <div className="flex justify-between items-center mb-2">
-                    <span className="text-white font-semibold text-sm">
-                      {player.name}
-                      {isKnocker && <span className="text-orange-300 text-[10px] ml-1.5 tracking-wider">KNOCKED</span>}
-                    </span>
-                    <span className={`text-2xl font-black tabular-nums ${score === 31 ? 'text-[#ffe27a]' : isLoser ? 'text-rose-400' : 'text-emerald-300'}`}>
-                      {score ?? '—'}
-                    </span>
-                  </div>
-                  <div className="flex gap-1 mb-2">
-                    {player.hand.map(c => <CardComponent key={c.id} card={c} size="sm" />)}
-                  </div>
-                  <div className="flex items-center justify-between">
-                    <LivesDisplay lives={player.lives} />
-                    {livesLost > 0 && <span className="text-rose-300 text-xs font-semibold">−{livesLost} {livesLost > 1 ? 'lives' : 'life'}</span>}
-                    {player.isEliminated && <span className="text-rose-400 text-[10px] font-bold tracking-widest">ELIMINATED</span>}
-                  </div>
-                </div>
-              );
-            })}
-        </div>
-        <div className="flex justify-center">
-          {gameOver
-            ? <button ref={btnRef} onClick={onPlayAgain} className="px-10 py-3 rounded-full font-bold text-[#3b2a05] bg-gradient-to-b from-[#fff3c4] to-[#e8c468] hover:brightness-110 active:scale-95 transition shadow-[0_8px_24px_rgba(232,196,104,0.35)]">Play Again</button>
-            : <button ref={btnRef} onClick={onNextRound} className="px-10 py-3 rounded-full font-bold text-[#3b2a05] bg-gradient-to-b from-[#fff3c4] to-[#e8c468] hover:brightness-110 active:scale-95 transition shadow-[0_8px_24px_rgba(232,196,104,0.35)]">Next Round →</button>}
-        </div>
-      </div>
-    </div>
-  );
-}
-
 // ─── Main Board ───────────────────────────────────────────────────────────────
 
-export default function GameBoard({ playerName, numBots, onExit }: Props) {
-  const [game, setGame]             = useState<GameState>(() => initGame(playerName, numBots));
+export default function GameBoard({ playerName, numBots, onExit, seats, net, offlineIds = [] }: Props) {
+  const [game, setGame]             = useState<GameState>(() => seats ? initGameFromSeats(seats) : initGame(playerName, numBots));
   const [showResults, setShowResults] = useState(false);
   const [botThinking, setBotThinking] = useState(false);
   const [flyingCard, setFlyingCard]   = useState<FlyInfo | null>(null);
@@ -386,7 +215,7 @@ export default function GameBoard({ playerName, numBots, onExit }: Props) {
 
     return () => { clearTimeout(t); setBotThinking(false); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [game.currentTurnIdx, game.turnPhase, game.roundOver, game.gameOver]);
+  }, [game.currentTurnIdx, game.turnPhase, game.roundOver, game.gameOver, game.players[game.currentTurnIdx]?.isBot]);
 
   // ── Round results ──────────────────────────────────────────────────────────
 
@@ -401,17 +230,20 @@ export default function GameBoard({ playerName, numBots, onExit }: Props) {
   const handleDrawDeck = () => {
     if (!isHumanTurn || game.turnPhase !== 'draw' || isAnimating) return;
     setConfirmKnock(false);
+    setLastMoves(m => ({ ...m, [human.id]: { draw: 'Drew from stock', fromStock: true } }));
     launchFly(drawFromDeck(game), stockRef.current, emptySlotRef.current ?? humanHandRef.current, false);
   };
 
   const handleDrawDiscard = () => {
     if (!isHumanTurn || game.turnPhase !== 'draw' || isAnimating) return;
     setConfirmKnock(false);
+    if (topDiscard) setLastMoves(m => ({ ...m, [human.id]: { draw: `Took ${cardName(topDiscard)} from discard` } }));
     launchFly(drawFromDiscard(game), discardRef.current, emptySlotRef.current ?? humanHandRef.current, true);
   };
 
   const handleKnock = () => {
     if (!isHumanTurn || game.turnPhase !== 'draw' || game.knockerIdx !== null || isAnimating) return;
+    setLastMoves(m => ({ ...m, [human.id]: { draw: '✊ Knocked!' } }));
     setGame(prev => knock(prev));
   };
 
@@ -420,6 +252,7 @@ export default function GameBoard({ playerName, numBots, onExit }: Props) {
     const next = discardCard(game, cardId);
     const card = human.hand.find(c => c.id === cardId);
     if (!card || next.discardPile.length <= game.discardPile.length) { setGame(next); return; }
+    setLastMoves(m => ({ ...m, [human.id]: { ...m[human.id], discard: `Discarded ${cardName(card)}` } }));
     const el = humanHandRef.current?.querySelector(`[data-card-id="${cardId}"]`);
     launchFlyCard(next, card, el?.getBoundingClientRect(), discardRef.current?.getBoundingClientRect(), true, 'discard', cardId);
   };
@@ -433,7 +266,55 @@ export default function GameBoard({ playerName, numBots, onExit }: Props) {
   const handlePlayAgain = () => {
     setShowResults(false);
     setLastMoves({});
-    setGame(initGame(playerName, numBots));
+    setGame(seats ? initGameFromSeats(seats) : initGame(playerName, numBots));
+  };
+
+  // ── Friends on other devices (multiplayer host) ────────────────────────────
+
+  const remoteRef = useRef<(pid: string, a: ClientAction) => void>(() => {});
+  useEffect(() => {
+    remoteRef.current = (pid, a) => {
+      // Wait out any card in flight so we always act on the settled state
+      if (pendingRef.current) { setTimeout(() => remoteRef.current(pid, a), 120); return; }
+      const g = gameRef.current;
+      const idx = g.currentTurnIdx;
+      const p = g.players[idx];
+      if (!p || p.id !== pid || p.isBot || idx === 0 || g.roundOver || g.gameOver) return;
+      const area = botAreaRefs.current[idx - 1];
+
+      if (a.t === 'draw' && g.turnPhase === 'draw') {
+        const fromDiscard = a.from === 'discard';
+        const after = fromDiscard ? drawFromDiscard(g) : drawFromDeck(g);
+        if (!after.drawnCard) return;
+        const drawn = after.drawnCard;
+        setLastMoves(m => ({
+          ...m,
+          [pid]: fromDiscard ? { draw: `Took ${cardName(drawn)} from discard` } : { draw: 'Drew from stock', fromStock: true },
+        }));
+        launchFly(after, fromDiscard ? discardRef.current : stockRef.current, area, fromDiscard);
+      } else if (a.t === 'knock' && g.turnPhase === 'draw' && g.knockerIdx === null) {
+        setLastMoves(m => ({ ...m, [pid]: { draw: '✊ Knocked!' } }));
+        setGame(knock(g));
+      } else if (a.t === 'discard' && g.turnPhase === 'discard') {
+        const after = discardCard(g, a.cardId);
+        const card = p.hand.find(c => c.id === a.cardId);
+        if (!card || after.discardPile.length <= g.discardPile.length) return;
+        setLastMoves(m => ({ ...m, [pid]: { ...m[pid], discard: `Discarded ${cardName(card)}` } }));
+        launchFlyCard(after, card, area?.getBoundingClientRect(), discardRef.current?.getBoundingClientRect(), true, 'discard');
+      }
+    };
+  });
+
+  useEffect(() => net?.subscribe((pid, a) => remoteRef.current(pid, a)), [net]);
+  useEffect(() => { net?.publish(game, lastMoves); }, [net, game, lastMoves]);
+
+  const currentId     = game.players[game.currentTurnIdx]?.id;
+  const currentOffline = !game.roundOver && !game.gameOver && currentId !== undefined && offlineIds.includes(currentId);
+  const takeOver = () => {
+    if (!currentId) return;
+    const next = takeOverWithBot(gameRef.current, currentId);
+    setGame(next);
+    scheduleBotDiscard(next);
   };
 
   // ── Derived display values ─────────────────────────────────────────────────
@@ -445,6 +326,9 @@ export default function GameBoard({ playerName, numBots, onExit }: Props) {
 
   const canDraw    = isHumanTurn && game.turnPhase === 'draw' && !isAnimating;
   const canDiscard = isHumanTurn && game.turnPhase === 'discard' && !isAnimating;
+  const myPrompt = canDiscard && game.drawnCard
+    ? `You ${game.drawnFromDiscard ? 'took' : 'drew'} ${cardName(game.drawnCard)}${game.drawnFromDiscard ? ' from the discard' : ''}. Choose a card to discard.`
+    : null;
   const humanScore = human.isEliminated ? 0
     : game.roundOver && game.roundResults ? game.roundResults.scores[human.id] : calculateScore(human.hand);
   const lit        = scoringIds(human.hand);
@@ -507,6 +391,7 @@ export default function GameBoard({ playerName, numBots, onExit }: Props) {
                 showScore={game.roundOver}
                 score={game.roundResults?.scores[bot.id]}
                 lastMove={lastMoves[bot.id]}
+                offline={offlineIds.includes(bot.id)}
               />
             </div>
           ))}
@@ -520,10 +405,16 @@ export default function GameBoard({ playerName, numBots, onExit }: Props) {
             aria-live="polite"
           >
             <p className="text-white/90 text-sm">
-              {botThinking && !game.roundOver ? `${currentPlayerName} is thinking…` : game.message}
+              {myPrompt ?? (botThinking && !game.roundOver ? `${currentPlayerName} is thinking…` : game.message)}
               {canDraw && !/Your turn/.test(game.message) ? ' Your move.' : ''}
             </p>
           </div>
+
+          {currentOffline && (
+            <button onClick={takeOver} className="animate-pop px-4 py-1.5 rounded-full bg-red-500/20 border border-red-400/60 text-red-100 text-xs font-semibold hover:bg-red-500/30 transition">
+              {currentPlayerName} disconnected — let a bot play for them
+            </button>
+          )}
 
           <div className="flex items-end gap-8 sm:gap-12">
             <div ref={stockRef} className="relative">
@@ -695,7 +586,7 @@ export default function GameBoard({ playerName, numBots, onExit }: Props) {
 
       {/* Round results modal */}
       {showResults && (
-        <RoundResultsModal state={game} onNextRound={handleNextRound} onPlayAgain={handlePlayAgain} />
+        <RoundResultsModal state={game} viewerId={human.id} onNextRound={handleNextRound} onPlayAgain={handlePlayAgain} />
       )}
     </div>
   );
