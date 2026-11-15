@@ -1,4 +1,4 @@
-import { Card, GameState, Player, RoundResult, Suit, Value } from './types';
+import { Card, GameState, Player, RoundResult, Seat, Suit, Value } from './types';
 
 const VALUE_POINTS: Record<string, number> = {
   '2': 2, '3': 3, '4': 4, '5': 5, '6': 6, '7': 7, '8': 8, '9': 9, '10': 10,
@@ -61,18 +61,23 @@ export function cardName(card: Card): string {
 // ─── Init / Deal ──────────────────────────────────────────────────────────────
 
 export function initGame(playerName: string, numBots: number): GameState {
-  const players: Player[] = [
-    { id: 'p0', name: playerName || 'You', hand: [], lives: 3, isBot: false, hasKnocked: false, isEliminated: false },
-    ...Array.from({ length: numBots }, (_, i) => ({
-      id: `bot${i + 1}`,
-      name: `Bot ${i + 1}`,
-      hand: [],
-      lives: 3,
-      isBot: true,
-      hasKnocked: false,
-      isEliminated: false,
-    })),
-  ];
+  return initGameFromSeats([
+    { id: 'p0', name: playerName || 'You', isBot: false },
+    ...Array.from({ length: numBots }, (_, i) => ({ id: `bot${i + 1}`, name: `Bot ${i + 1}`, isBot: true })),
+  ]);
+}
+
+// Seat 0 is the local/host player; any seat may be a remote human or a bot.
+export function initGameFromSeats(seats: Seat[]): GameState {
+  const players: Player[] = seats.map(seat => ({
+    id: seat.id,
+    name: seat.name,
+    hand: [],
+    lives: 3,
+    isBot: seat.isBot,
+    hasKnocked: false,
+    isEliminated: false,
+  }));
 
   return dealRound({
     deck: [],
@@ -156,7 +161,7 @@ export function drawFromDeck(state: GameState): GameState {
     turnPhase: 'discard',
     drawnCard,
     drawnFromDiscard: false,
-    message: `You drew ${cardName(drawnCard)}. Choose a card to discard.`,
+    message: `${state.players[state.currentTurnIdx].name} drew from the stock pile.`,
   };
 }
 
@@ -179,7 +184,7 @@ export function drawFromDiscard(state: GameState): GameState {
     turnPhase: 'discard',
     drawnCard,
     drawnFromDiscard: true,
-    message: `You drew ${cardName(drawnCard)} from the discard. Choose a card to discard.`,
+    message: `${state.players[state.currentTurnIdx].name} took ${cardName(drawnCard)} from the discard pile.`,
   };
 }
 
@@ -503,4 +508,32 @@ function nextActiveIdx(players: Player[], current: number): number {
     guard++;
   }
   return next;
+}
+
+
+// ─── Multiplayer helpers ──────────────────────────────────────────────────────
+
+const HIDDEN_BASE = { suit: 'S', value: '2', points: 0 } as const;
+
+// What a remote player is allowed to see: their own hand, public piles, and
+// everyone's hand only once the round is over. Hidden cards get stable fake ids.
+export function redactFor(state: GameState, seat: number): GameState {
+  const hide = (n: number, tag: string): Card[] =>
+    Array.from({ length: n }, (_, i) => ({ ...HIDDEN_BASE, id: `hidden-${tag}-${i}` }));
+  return {
+    ...state,
+    deck: hide(state.deck.length, 'deck'),
+    players: state.players.map((p, i) =>
+      i === seat || state.roundOver ? p : { ...p, hand: hide(p.hand.length, p.id) }
+    ),
+    drawnCard: state.currentTurnIdx === seat ? state.drawnCard : null,
+  };
+}
+
+// A disconnected human is replaced by a bot so the table never stalls.
+export function takeOverWithBot(state: GameState, playerId: string): GameState {
+  return {
+    ...state,
+    players: state.players.map(p => (p.id === playerId ? { ...p, isBot: true } : p)),
+  };
 }

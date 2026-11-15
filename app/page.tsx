@@ -1,8 +1,11 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useSyncExternalStore } from 'react';
 import GameBoard from '@/components/GameBoard';
 import CardComponent from '@/components/CardComponent';
+import FriendsHost from '@/components/FriendsHost';
+import FriendsGuest from '@/components/FriendsGuest';
+import { normalizeCode } from '@/lib/net';
 
 const DEMO = [
   { suit: 'S', value: 'A', points: 11, id: 'AS' },
@@ -10,18 +13,97 @@ const DEMO = [
   { suit: 'S', value: '10', points: 10, id: '10S' },
 ] as const;
 
+const noopSubscribe = () => () => {};
+const readJoinParam = () => normalizeCode(new URLSearchParams(window.location.search).get('join') ?? '');
+
+type Mode = 'menu' | 'solo' | 'host' | 'join' | 'guest';
+
 export default function Home() {
-  const [started, setStarted] = useState(false);
+  const [mode, setMode] = useState<Mode>('menu');
   const [playerName, setPlayerName] = useState('');
   const [numBots, setNumBots] = useState(2);
+  const [joinCode, setJoinCode] = useState('');
+  const [linkDismissed, setLinkDismissed] = useState(false);
+  // ?join=ABCD from a texted invite link ('' on the server → no hydration mismatch)
+  const linkCode = useSyncExternalStore(noopSubscribe, readJoinParam, () => '');
+  const started = mode === 'solo';
+  const code = joinCode || (linkDismissed ? '' : linkCode);
+  const showJoin = mode === 'join' || (mode === 'menu' && !!linkCode && !linkDismissed);
+
+  const leaveToMenu = () => {
+    setMode('menu');
+    setLinkDismissed(true);
+    setJoinCode('');
+  };
+
+  if (mode === 'host') {
+    return <FriendsHost hostName={playerName.trim() || 'Host'} onExit={leaveToMenu} />;
+  }
+  if (mode === 'guest') {
+    return <FriendsGuest code={code} name={playerName.trim() || 'Friend'} onExit={leaveToMenu} />;
+  }
 
   if (started) {
     return (
       <GameBoard
         playerName={playerName || 'You'}
         numBots={numBots}
-        onExit={() => setStarted(false)}
+        onExit={() => setMode('menu')}
       />
+    );
+  }
+
+  if (showJoin) {
+    const valid = code.length === 4;
+    return (
+      <div className="felt min-h-dvh flex items-center justify-center p-4">
+        <div className="relative z-[1] animate-pop glass bg-[#0c1c14]/70 rounded-3xl p-6 sm:p-8 w-full max-w-md">
+          <div className="text-center mb-6">
+            <h1 className="text-5xl font-black gold-text tracking-[0.2em] card-serif">31</h1>
+            <p className="text-white/50 text-xs uppercase tracking-[0.3em] mt-1">Join a friend&apos;s game</p>
+          </div>
+          <div className="space-y-5">
+            <div>
+              <label htmlFor="code" className="block text-white/60 text-xs uppercase tracking-widest mb-1.5">Room code</label>
+              <input
+                id="code"
+                inputMode="text"
+                autoCapitalize="characters"
+                autoComplete="off"
+                autoCorrect="off"
+                spellCheck={false}
+                value={code}
+                onChange={e => setJoinCode(normalizeCode(e.target.value))}
+                placeholder="ABCD"
+                maxLength={4}
+                className="w-full bg-black/30 border border-white/15 rounded-xl px-4 py-3 text-center text-3xl font-black tracking-[0.5em] pl-[0.5em] text-[#ffe27a] placeholder-white/20 focus:outline-none focus:border-[#e8c468] focus:ring-1 focus:ring-[#e8c468]/60 transition uppercase"
+              />
+            </div>
+            <div>
+              <label htmlFor="jname" className="block text-white/60 text-xs uppercase tracking-widest mb-1.5">Your name</label>
+              <input
+                id="jname"
+                type="text"
+                value={playerName}
+                onChange={e => setPlayerName(e.target.value)}
+                onKeyDown={e => e.key === 'Enter' && valid && (setJoinCode(code), setMode('guest'))}
+                placeholder="Enter your name"
+                maxLength={16}
+                autoFocus={!!linkCode}
+                className="w-full bg-black/30 border border-white/15 rounded-xl px-4 py-2.5 text-white placeholder-white/30 focus:outline-none focus:border-[#e8c468] focus:ring-1 focus:ring-[#e8c468]/60 transition"
+              />
+            </div>
+            <button
+              onClick={() => { setJoinCode(code); setMode('guest'); }}
+              disabled={!valid}
+              className="w-full py-3.5 rounded-full font-bold text-lg text-[#3b2a05] bg-gradient-to-b from-[#fff3c4] to-[#e8c468] hover:brightness-110 active:scale-[0.98] transition shadow-[0_10px_28px_rgba(232,196,104,0.35)] disabled:opacity-40 disabled:cursor-not-allowed"
+            >
+              Join game →
+            </button>
+            <button onClick={leaveToMenu} className="block mx-auto text-white/40 hover:text-white/70 text-xs uppercase tracking-widest transition">Back</button>
+          </div>
+        </div>
+      </div>
     );
   }
 
@@ -56,6 +138,7 @@ export default function Home() {
             <p>• Lowest scorer loses a life. Knocker who loses pays 2 lives.</p>
             <p>• 3 lives each. At 0 you get a <span className="text-purple-300">Free Ride</span>. Lose again → eliminated.</p>
             <p className="pt-1 text-white/40">Tip: press D / S to draw, K to knock, 1–4 to discard.</p>
+            <p className="text-white/40">Friends: host a room, then text them the invite link — they play from their own phone.</p>
           </div>
         </details>
 
@@ -68,7 +151,7 @@ export default function Home() {
               type="text"
               value={playerName}
               onChange={e => setPlayerName(e.target.value)}
-              onKeyDown={e => e.key === 'Enter' && setStarted(true)}
+              onKeyDown={e => e.key === 'Enter' && setMode('solo')}
               placeholder="Enter your name"
               maxLength={16}
               className="w-full bg-black/30 border border-white/15 rounded-xl px-4 py-2.5 text-white placeholder-white/30 focus:outline-none focus:border-[#e8c468] focus:ring-1 focus:ring-[#e8c468]/60 transition"
@@ -95,11 +178,29 @@ export default function Home() {
           </div>
 
           <button
-            onClick={() => setStarted(true)}
+            onClick={() => setMode('solo')}
             className="w-full py-3.5 rounded-full font-bold text-lg text-[#3b2a05] bg-gradient-to-b from-[#fff3c4] to-[#e8c468] hover:brightness-110 active:scale-[0.98] transition shadow-[0_10px_28px_rgba(232,196,104,0.35)]"
           >
             Deal Cards →
           </button>
+
+          <div className="flex items-center gap-3 text-white/30 text-[11px] uppercase tracking-[0.25em]">
+            <span className="h-px flex-1 bg-white/10" />play with friends<span className="h-px flex-1 bg-white/10" />
+          </div>
+          <div className="flex gap-2">
+            <button
+              onClick={() => setMode('host')}
+              className="flex-1 py-3 rounded-full font-bold text-sm text-white border border-[#e8c468]/60 hover:bg-[#e8c468]/10 active:scale-[0.98] transition"
+            >
+              Host a room
+            </button>
+            <button
+              onClick={() => setMode('join')}
+              className="flex-1 py-3 rounded-full font-bold text-sm text-white border border-white/25 hover:bg-white/10 active:scale-[0.98] transition"
+            >
+              Join a room
+            </button>
+          </div>
         </div>
       </div>
     </div>
