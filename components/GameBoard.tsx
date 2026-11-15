@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { Card, GameState, Player } from '@/lib/types';
 import {
   initGame, drawFromDeck, drawFromDiscard, knock, discardCard, dealRound,
@@ -12,7 +12,12 @@ interface Props { playerName: string; numBots: number; onExit: () => void; }
 
 // ─── Flying Card Overlay ──────────────────────────────────────────────────────
 
-interface FlyInfo { card: Card; faceUp: boolean; fromRect: DOMRect; toRect: DOMRect; }
+interface FlyInfo {
+  card: Card; faceUp: boolean; fromRect: DOMRect; toRect: DOMRect;
+  kind: 'draw' | 'discard';
+  /** Hand card to hide while its flying copy is in the air. */
+  hideId?: string;
+}
 
 function FlyingCard({ info, onComplete }: { info: FlyInfo; onComplete: () => void }) {
   const [moving, setMoving] = useState(false);
@@ -36,9 +41,9 @@ function FlyingCard({ info, onComplete }: { info: FlyInfo; onComplete: () => voi
         left: info.fromRect.left + info.fromRect.width  / 2,
         top:  info.fromRect.top  + info.fromRect.height / 2,
         transform: moving
-          ? `translate(calc(${dx}px - 50%), calc(${dy}px - 50%))`
+          ? `translate(calc(${dx}px - 50%), calc(${dy}px - 50%)) rotate(${info.kind === 'discard' ? 7 : -5}deg)`
           : 'translate(-50%, -50%)',
-        transition: moving ? 'transform 0.5s cubic-bezier(0.25, 0.46, 0.45, 0.94)' : 'none',
+        transition: moving ? 'transform 0.5s cubic-bezier(0.22, 0.9, 0.3, 1)' : 'none',
         filter: info.faceUp
           ? 'drop-shadow(0 6px 20px rgba(251,191,36,0.85))'
           : 'drop-shadow(0 6px 20px rgba(96,165,250,0.85))',
@@ -99,8 +104,10 @@ function LivesDisplay({ lives }: { lives: number }) {
   );
 }
 
-function BotPlayerArea({ player, isActive, score, showScore }: {
-  player: Player; isActive: boolean; score?: number; showScore?: boolean;
+interface BotMove { draw?: string; fromStock?: boolean; discard?: string }
+
+function BotPlayerArea({ player, isActive, score, showScore, lastMove }: {
+  player: Player; isActive: boolean; score?: number; showScore?: boolean; lastMove?: BotMove;
 }) {
   return (
     <div className={`glass flex flex-col items-center gap-2 px-4 py-3 rounded-2xl transition-all duration-300
@@ -120,6 +127,18 @@ function BotPlayerArea({ player, isActive, score, showScore }: {
         )}
       </div>
       <LivesDisplay lives={player.lives} />
+      {/* Persistent record of what this bot just did */}
+      <div className="h-9 flex flex-col items-center justify-center gap-0.5 text-[11px] leading-tight" aria-live="polite">
+        {lastMove?.draw && (
+          <span key={lastMove.draw} className={`animate-pop px-2 py-0.5 rounded-full border font-semibold ${
+            lastMove.fromStock
+              ? 'bg-sky-500/20 border-sky-400/50 text-sky-100'
+              : 'bg-amber-500/20 border-amber-400/50 text-amber-100'}`}>
+            {lastMove.fromStock ? '🂠 ' : ''}{lastMove.draw}
+          </span>
+        )}
+        {lastMove?.discard && <span className="animate-pop text-white/55">{lastMove.discard}</span>}
+      </div>
       <div className="flex items-center gap-1 min-h-14">
         {player.isEliminated ? (
           <span className="text-rose-400 text-xs font-bold tracking-widest">ELIMINATED</span>
@@ -232,6 +251,7 @@ export default function GameBoard({ playerName, numBots, onExit }: Props) {
   const [hoverId, setHoverId]         = useState<string | null>(null);
   const [hoverDiscard, setHoverDiscard] = useState(false);
   const [confirmKnock, setConfirmKnock] = useState(false);
+  const [lastMoves, setLastMoves]     = useState<Record<string, BotMove>>({});
 
   // Stable ref mirrors — read inside setTimeout/callbacks without stale-closure issues
   const gameRef    = useRef(game);
@@ -242,6 +262,8 @@ export default function GameBoard({ playerName, numBots, onExit }: Props) {
   const stockRef     = useRef<HTMLDivElement>(null);
   const discardRef   = useRef<HTMLDivElement>(null);
   const humanHandRef = useRef<HTMLDivElement>(null);
+  const emptySlotRef = useRef<HTMLDivElement>(null);
+  const prevCardLeft = useRef<Map<string, number>>(new Map());
   const botAreaRefs  = useRef<(HTMLDivElement | null)[]>([]);
 
   const human        = game.players[0];
@@ -249,39 +271,71 @@ export default function GameBoard({ playerName, numBots, onExit }: Props) {
   const topDiscard   = game.discardPile[game.discardPile.length - 1];
   const isAnimating  = flyingCard !== null;
 
+  // Cards glide to their new slot when the hand changes (FLIP).
+  useLayoutEffect(() => {
+    const container = humanHandRef.current;
+    if (!container) return;
+    const next = new Map<string, number>();
+    container.querySelectorAll<HTMLElement>('[data-card-id]').forEach(el => {
+      const left = el.getBoundingClientRect().left;
+      const id = el.dataset.cardId as string;
+      next.set(id, left);
+      const prev = prevCardLeft.current.get(id);
+      if (prev !== undefined && Math.abs(prev - left) > 1) {
+        el.style.transition = 'none';
+        el.style.transform = `translateX(${prev - left}px)`;
+        void el.offsetWidth;
+        el.style.transition = 'transform 0.35s cubic-bezier(0.22, 1, 0.36, 1)';
+        el.style.transform = '';
+      }
+    });
+    prevCardLeft.current = next;
+  });
+
   // ── Animation helpers ──────────────────────────────────────────────────────
 
-  // If nextState puts a bot in the discard phase, schedule the discard after `ms` ms
-  function scheduleBotDiscard(nextState: GameState, ms = 500) {
+  // If nextState puts a bot in the discard phase, schedule the discard after `ms` ms,
+  // flying the discarded card from the bot to the discard pile.
+  function scheduleBotDiscard(nextState: GameState, ms = 600) {
     const cp = nextState.players[nextState.currentTurnIdx];
     if (cp?.isBot && nextState.turnPhase === 'discard' && !nextState.roundOver && !nextState.gameOver) {
       setTimeout(() => {
-        setGame(s => {
-          const p = s.players[s.currentTurnIdx];
-          if (!p?.isBot || s.turnPhase !== 'discard' || s.roundOver) return s;
-          return executeBotDiscard(s);
-        });
+        const g = gameRef.current;
+        const p = g.players[g.currentTurnIdx];
+        if (!p?.isBot || g.turnPhase !== 'discard' || g.roundOver) return;
+        const after = executeBotDiscard(g);
+        const card = after.discardPile[after.discardPile.length - 1];
+        const botEl = botAreaRefs.current[g.currentTurnIdx - 1];
+        if (!card || after.discardPile.length <= g.discardPile.length) { setGame(after); return; }
+        setLastMoves(m => ({ ...m, [p.id]: { ...m[p.id], discard: `Discarded ${cardName(card)}` } }));
+        launchFlyCard(after, card, botEl?.getBoundingClientRect(), discardRef.current?.getBoundingClientRect(), true, 'discard');
       }, ms);
     }
   }
 
-  // Launch a card flying from `fromEl` to `toEl`, then apply `nextState`.
-  // Falls back to an immediate state update when rects are unavailable.
-  function launchFly(
-    nextState: GameState,
-    fromEl: HTMLDivElement | null | undefined,
-    toEl:   HTMLDivElement | null | undefined,
-    faceUp: boolean
+  // Fly `card` between two rects, then apply `nextState`.
+  function launchFlyCard(
+    nextState: GameState, card: Card, fromRect: DOMRect | undefined, toRect: DOMRect | undefined,
+    faceUp: boolean, kind: 'draw' | 'discard', hideId?: string
   ) {
-    const fromRect = fromEl?.getBoundingClientRect();
-    const toRect   = toEl?.getBoundingClientRect();
-    if (!nextState.drawnCard || !fromRect || !toRect) {
+    if (!fromRect || !toRect) {
       setGame(nextState);
       scheduleBotDiscard(nextState);
       return;
     }
     pendingRef.current = nextState;
-    setFlyingCard({ card: nextState.drawnCard, faceUp, fromRect, toRect });
+    setFlyingCard({ card, faceUp, fromRect, toRect, kind, hideId });
+  }
+
+  // Draw flight: the drawn card travels from a pile to `toEl`.
+  function launchFly(
+    nextState: GameState,
+    fromEl: HTMLElement | null | undefined,
+    toEl:   HTMLElement | null | undefined,
+    faceUp: boolean
+  ) {
+    if (!nextState.drawnCard) { setGame(nextState); scheduleBotDiscard(nextState); return; }
+    launchFlyCard(nextState, nextState.drawnCard, fromEl?.getBoundingClientRect(), toEl?.getBoundingClientRect(), faceUp, 'draw');
   }
 
   // Called by FlyingCard when the transition ends
@@ -312,9 +366,16 @@ export default function GameBoard({ playerName, numBots, onExit }: Props) {
       const afterDraw = executeBotDraw(g);
       if (!afterDraw.drawnCard) {
         // Bot knocked — no card to animate
+        setLastMoves(m => ({ ...m, [cp.id]: { draw: '✊ Knocked!', discard: undefined } }));
         setGame(afterDraw);
         return;
       }
+      setLastMoves(m => ({
+        ...m,
+        [cp.id]: afterDraw.drawnFromDiscard
+          ? { draw: `Took ${cardName(afterDraw.drawnCard!)} from discard` }
+          : { draw: 'Drew from stock', fromStock: true },
+      }));
       const fromEl = afterDraw.drawnFromDiscard ? discardRef.current : stockRef.current;
       const toEl   = botAreaRefs.current[g.currentTurnIdx - 1]; // bots start at player index 1
       launchFly(afterDraw, fromEl, toEl, afterDraw.drawnFromDiscard);
@@ -337,13 +398,13 @@ export default function GameBoard({ playerName, numBots, onExit }: Props) {
   const handleDrawDeck = () => {
     if (!isHumanTurn || game.turnPhase !== 'draw' || isAnimating) return;
     setConfirmKnock(false);
-    launchFly(drawFromDeck(game), stockRef.current, humanHandRef.current, false);
+    launchFly(drawFromDeck(game), stockRef.current, emptySlotRef.current ?? humanHandRef.current, false);
   };
 
   const handleDrawDiscard = () => {
     if (!isHumanTurn || game.turnPhase !== 'draw' || isAnimating) return;
     setConfirmKnock(false);
-    launchFly(drawFromDiscard(game), discardRef.current, humanHandRef.current, true);
+    launchFly(drawFromDiscard(game), discardRef.current, emptySlotRef.current ?? humanHandRef.current, true);
   };
 
   const handleKnock = () => {
@@ -353,16 +414,22 @@ export default function GameBoard({ playerName, numBots, onExit }: Props) {
 
   const handleDiscard = (cardId: string) => {
     if (!isHumanTurn || game.turnPhase !== 'discard' || isAnimating) return;
-    setGame(prev => discardCard(prev, cardId));
+    const next = discardCard(game, cardId);
+    const card = human.hand.find(c => c.id === cardId);
+    if (!card || next.discardPile.length <= game.discardPile.length) { setGame(next); return; }
+    const el = humanHandRef.current?.querySelector(`[data-card-id="${cardId}"]`);
+    launchFlyCard(next, card, el?.getBoundingClientRect(), discardRef.current?.getBoundingClientRect(), true, 'discard', cardId);
   };
 
   const handleNextRound = () => {
     setShowResults(false);
+    setLastMoves({});
     setGame(prev => dealRound({ ...prev, roundNumber: prev.roundNumber + 1 }));
   };
 
   const handlePlayAgain = () => {
     setShowResults(false);
+    setLastMoves({});
     setGame(initGame(playerName, numBots));
   };
 
@@ -371,7 +438,7 @@ export default function GameBoard({ playerName, numBots, onExit }: Props) {
   const bots              = game.players.slice(1);
   const currentPlayerName = game.players[game.currentTurnIdx]?.name ?? '';
   // While a discard-pile card is in flight, hide the source card so it doesn't appear in two places
-  const hidingTopDiscard  = isAnimating && flyingCard?.faceUp;
+  const hidingTopDiscard  = isAnimating && flyingCard?.kind === 'draw' && flyingCard.faceUp;
 
   const canDraw    = isHumanTurn && game.turnPhase === 'draw' && !isAnimating;
   const canDiscard = isHumanTurn && game.turnPhase === 'discard' && !isAnimating;
@@ -433,6 +500,7 @@ export default function GameBoard({ playerName, numBots, onExit }: Props) {
                 isActive={game.currentTurnIdx === i + 1 && !game.roundOver}
                 showScore={game.roundOver}
                 score={game.roundResults?.scores[bot.id]}
+                lastMove={lastMoves[bot.id]}
               />
             </div>
           ))}
@@ -455,7 +523,7 @@ export default function GameBoard({ playerName, numBots, onExit }: Props) {
               <FaceDownPile
                 count={game.deck.length}
                 label="Stock"
-                highlight={canDraw}
+                highlight={canDraw || (isAnimating && flyingCard?.kind === 'draw' && !flyingCard.faceUp && game.currentTurnIdx !== 0)}
                 onClick={canDraw ? handleDrawDeck : undefined}
               />
             </div>
@@ -532,17 +600,17 @@ export default function GameBoard({ playerName, numBots, onExit }: Props) {
                 )}
               </div>
 
-              <div ref={humanHandRef} className="flex gap-2 sm:gap-3 justify-center min-h-28">
+              <div ref={humanHandRef} className="flex gap-1.5 sm:gap-3 justify-center min-h-28">
                 {human.hand.map((card, i) => {
                   const isDrawnFromDiscard = game.drawnFromDiscard && game.drawnCard?.id === card.id;
                   const canPick = canDiscard && !isDrawnFromDiscard;
                   const showLit = !game.roundOver && human.hand.length >= 3;
                   return (
-                    <div key={card.id} className="relative">
+                    <div key={card.id} data-card-id={card.id} className="relative" style={{ opacity: flyingCard?.hideId === card.id ? 0 : 1 }}>
                       <CardComponent
                         card={card}
                         size="lg"
-                        animateIn
+                        animateIn={card.id !== game.drawnCard?.id}
                         dealIndex={i}
                         selectable={canPick}
                         disabled={canDiscard && isDrawnFromDiscard}
@@ -562,6 +630,15 @@ export default function GameBoard({ playerName, numBots, onExit }: Props) {
                     </div>
                   );
                 })}
+                {/* Reserved slot(s) so cards never jump when the 4th card arrives */}
+                {Array.from({ length: Math.max(0, 4 - human.hand.length) }).map((_, i) => (
+                  <div
+                    key={`slot-${i}`}
+                    ref={i === 0 ? emptySlotRef : undefined}
+                    className="w-[4.5rem] h-[6.5rem] sm:w-20 sm:h-28 rounded-xl border border-dashed border-white/10"
+                    aria-hidden
+                  />
+                ))}
               </div>
 
               {/* Turn guide + actions */}
