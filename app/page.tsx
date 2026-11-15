@@ -27,7 +27,7 @@ export default function Home() {
 
   return (
     <div className="felt min-h-screen flex items-center justify-center p-4">
-      <div className="animate-pop glass bg-[#0c1c14]/70 rounded-3xl p-6 sm:p-8 w-full max-w-md">
+      <div className="relative z-[1] animate-pop glass bg-[#0c1c14]/70 rounded-3xl p-6 sm:p-8 w-full max-w-md">
         {/* Title */}
         <div className="text-center mb-6">
           <div className="flex justify-center gap-2 mb-4">

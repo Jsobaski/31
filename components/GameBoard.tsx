@@ -110,12 +110,12 @@ function BotPlayerArea({ player, isActive, score, showScore, lastMove }: {
   player: Player; isActive: boolean; score?: number; showScore?: boolean; lastMove?: BotMove;
 }) {
   return (
-    <div className={`glass flex flex-col items-center gap-2 px-4 py-3 rounded-2xl transition-all duration-300
+    <div className={`glass flex flex-col items-center gap-1.5 sm:gap-2 px-2 sm:px-4 py-2 sm:py-3 rounded-2xl transition-all duration-300
       ${isActive ? 'turn-glow' : ''}
       ${player.isEliminated ? 'opacity-40 grayscale' : ''}
     `}>
       <div className="flex items-center gap-2">
-        <span className={`w-7 h-7 rounded-full flex items-center justify-center text-xs font-bold card-serif border
+        <span className={`hidden sm:flex w-7 h-7 rounded-full items-center justify-center text-xs font-bold card-serif border
           ${isActive ? 'bg-[#e8c468] text-[#3b2a05] border-[#fff3c4]' : 'bg-white/10 text-white/80 border-white/20'}`}>
           {player.name.slice(-1)}
         </span>
@@ -128,9 +128,9 @@ function BotPlayerArea({ player, isActive, score, showScore, lastMove }: {
       </div>
       <LivesDisplay lives={player.lives} />
       {/* Persistent record of what this bot just did */}
-      <div className="h-9 flex flex-col items-center justify-center gap-0.5 text-[11px] leading-tight" aria-live="polite">
+      <div className="h-[3.25rem] sm:h-9 w-full flex flex-col items-center justify-center gap-0.5 text-[10px] sm:text-[11px] leading-tight text-center" aria-live="polite">
         {lastMove?.draw && (
-          <span key={lastMove.draw} className={`animate-pop px-2 py-0.5 rounded-full border font-semibold ${
+          <span key={lastMove.draw} className={`animate-pop px-2 py-0.5 rounded-xl sm:rounded-full border font-semibold ${
             lastMove.fromStock
               ? 'bg-sky-500/20 border-sky-400/50 text-sky-100'
               : 'bg-amber-500/20 border-amber-400/50 text-amber-100'}`}>
@@ -139,7 +139,7 @@ function BotPlayerArea({ player, isActive, score, showScore, lastMove }: {
         )}
         {lastMove?.discard && <span className="animate-pop text-white/55">{lastMove.discard}</span>}
       </div>
-      <div className="flex items-center gap-1 min-h-14">
+      <div className="flex items-center justify-center gap-1 min-h-14 max-w-full">
         {player.isEliminated ? (
           <span className="text-rose-400 text-xs font-bold tracking-widest">ELIMINATED</span>
         ) : showScore ? (
@@ -148,7 +148,7 @@ function BotPlayerArea({ player, isActive, score, showScore, lastMove }: {
             <span className="text-[#ffe27a] font-bold text-xl ml-1 tabular-nums">{score}</span>
           </>
         ) : (
-          <div className="flex -space-x-3">
+          <div className="flex -space-x-4 sm:-space-x-3">
             {player.hand.map((c, i) => (
               <div key={c.id} style={{ transform: `rotate(${(i - (player.hand.length - 1) / 2) * 6}deg)` }}>
                 <CardComponent faceDown size="sm" />
@@ -164,6 +164,9 @@ function BotPlayerArea({ player, isActive, score, showScore, lastMove }: {
 function RoundResultsModal({ state, onNextRound, onPlayAgain }: {
   state: GameState; onNextRound: () => void; onPlayAgain: () => void;
 }) {
+  const btnRef = useRef<HTMLButtonElement>(null);
+  // Focus for keyboard users without scrolling the panel past its title
+  useEffect(() => { btnRef.current?.focus({ preventScroll: true }); }, []);
   const { roundResults, players, gameOver, winnerId } = state;
   if (!roundResults) return null;
   const winner = winnerId ? players.find(p => p.id === winnerId) : null;
@@ -171,7 +174,7 @@ function RoundResultsModal({ state, onNextRound, onPlayAgain }: {
 
   return (
     <div className="fixed inset-0 bg-black/75 backdrop-blur-sm flex items-center justify-center z-50 p-4">
-      <div className="animate-pop glass bg-[#0c1c14]/90 rounded-3xl p-6 sm:p-8 max-w-2xl w-full max-h-[92vh] overflow-y-auto">
+      <div className="animate-pop glass bg-[#0c1c14]/90 rounded-3xl p-4 sm:p-8 max-w-2xl w-full max-h-[94dvh] overflow-y-auto">
         {gameOver ? (
           <div className="text-center mb-6">
             <div className="text-5xl mb-2">{humanWon ? '🏆' : '💀'}</div>
@@ -196,7 +199,7 @@ function RoundResultsModal({ state, onNextRound, onPlayAgain }: {
             The knocker had the lowest score — 2 lives lost.
           </div>
         )}
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-6">
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 sm:gap-3 mb-4 sm:mb-6">
           {players
             .filter(p => !p.isEliminated || roundResults.scores[p.id] !== undefined)
             .map(player => {
@@ -233,8 +236,8 @@ function RoundResultsModal({ state, onNextRound, onPlayAgain }: {
         </div>
         <div className="flex justify-center">
           {gameOver
-            ? <button onClick={onPlayAgain} className="px-10 py-3 rounded-full font-bold text-[#3b2a05] bg-gradient-to-b from-[#fff3c4] to-[#e8c468] hover:brightness-110 active:scale-95 transition shadow-[0_8px_24px_rgba(232,196,104,0.35)]">Play Again</button>
-            : <button onClick={onNextRound} autoFocus className="px-10 py-3 rounded-full font-bold text-[#3b2a05] bg-gradient-to-b from-[#fff3c4] to-[#e8c468] hover:brightness-110 active:scale-95 transition shadow-[0_8px_24px_rgba(232,196,104,0.35)]">Next Round →</button>}
+            ? <button ref={btnRef} onClick={onPlayAgain} className="px-10 py-3 rounded-full font-bold text-[#3b2a05] bg-gradient-to-b from-[#fff3c4] to-[#e8c468] hover:brightness-110 active:scale-95 transition shadow-[0_8px_24px_rgba(232,196,104,0.35)]">Play Again</button>
+            : <button ref={btnRef} onClick={onNextRound} className="px-10 py-3 rounded-full font-bold text-[#3b2a05] bg-gradient-to-b from-[#fff3c4] to-[#e8c468] hover:brightness-110 active:scale-95 transition shadow-[0_8px_24px_rgba(232,196,104,0.35)]">Next Round →</button>}
         </div>
       </div>
     </div>
@@ -472,10 +475,10 @@ export default function GameBoard({ playerName, numBots, onExit }: Props) {
   // ── Render ─────────────────────────────────────────────────────────────────
 
   return (
-    <div className="felt min-h-screen flex flex-col overflow-hidden">
+    <div className="felt min-h-dvh flex flex-col overflow-hidden">
 
       {/* Header */}
-      <header className="flex items-center justify-between px-4 sm:px-8 py-3 bg-black/35 backdrop-blur border-b border-[#e8c468]/20">
+      <header className="relative z-[1] flex items-center justify-between px-4 sm:px-8 py-2 sm:py-3 bg-black/35 backdrop-blur border-b border-[#e8c468]/20">
         <div className="flex items-baseline gap-3">
           <h1 className="gold-text font-black text-2xl tracking-[0.25em] card-serif">31</h1>
           <span className="text-white/40 text-xs uppercase tracking-[0.25em] hidden sm:inline">Thirty-One</span>
@@ -489,12 +492,15 @@ export default function GameBoard({ playerName, numBots, onExit }: Props) {
       </header>
 
       {/* Board */}
-      <main className="flex-1 flex flex-col items-center justify-between p-4 gap-4 max-w-4xl mx-auto w-full">
+      <main className="relative z-[1] flex-1 flex flex-col items-center justify-between p-3 sm:p-4 gap-3 sm:gap-4 max-w-4xl mx-auto w-full">
 
         {/* Bot zones */}
-        <div className={`flex flex-wrap gap-3 sm:gap-5 w-full justify-center ${bots.length === 1 ? 'max-w-xs' : ''}`}>
+        <div
+          className={`grid gap-2 sm:gap-5 w-full justify-center ${bots.length === 1 ? 'max-w-xs' : ''}`}
+          style={{ gridTemplateColumns: `repeat(${bots.length}, minmax(0, 1fr))` }}
+        >
           {bots.map((bot, i) => (
-            <div key={bot.id} ref={el => { botAreaRefs.current[i] = el; }}>
+            <div key={bot.id} ref={el => { botAreaRefs.current[i] = el; }} className="min-w-0">
               <BotPlayerArea
                 player={bot}
                 isActive={game.currentTurnIdx === i + 1 && !game.roundOver}
@@ -507,7 +513,7 @@ export default function GameBoard({ playerName, numBots, onExit }: Props) {
         </div>
 
         {/* Centre: status + piles */}
-        <div className="flex flex-col items-center gap-5">
+        <div className="flex flex-col items-center gap-3 sm:gap-5">
           <div
             key={game.message}
             className="animate-pop glass px-5 py-2 rounded-full text-center max-w-md"
@@ -515,6 +521,7 @@ export default function GameBoard({ playerName, numBots, onExit }: Props) {
           >
             <p className="text-white/90 text-sm">
               {botThinking && !game.roundOver ? `${currentPlayerName} is thinking…` : game.message}
+              {canDraw && !/Your turn/.test(game.message) ? ' Your move.' : ''}
             </p>
           </div>
 
@@ -561,7 +568,7 @@ export default function GameBoard({ playerName, numBots, onExit }: Props) {
         </div>
 
         {/* Human player zone */}
-        <section className={`glass w-full flex flex-col items-center gap-3 p-4 sm:p-5 rounded-3xl transition-all duration-300
+        <section className={`glass w-full flex flex-col items-center gap-2 sm:gap-3 p-3 sm:p-5 rounded-3xl transition-all duration-300
           ${isHumanTurn ? 'turn-glow' : ''}
           ${human.isEliminated ? 'opacity-50' : ''}
         `}>
@@ -592,7 +599,7 @@ export default function GameBoard({ playerName, numBots, onExit }: Props) {
           ) : (
             <>
               {/* Hover preview */}
-              <div className="h-6 flex items-center">
+              <div className="h-5 sm:h-6 flex items-center">
                 {discardPreview !== null && hoverCard && (
                   <span className="animate-pop text-xs text-white/80 px-3 py-0.5 rounded-full bg-black/50 border border-white/15">
                     Discard {cardName(hoverCard)} → score <b className={scoreColor(discardPreview)}>{discardPreview}</b>
@@ -600,7 +607,7 @@ export default function GameBoard({ playerName, numBots, onExit }: Props) {
                 )}
               </div>
 
-              <div ref={humanHandRef} className="flex gap-1.5 sm:gap-3 justify-center min-h-28">
+              <div ref={humanHandRef} className="flex gap-1.5 sm:gap-3 justify-center min-h-[6.5rem] sm:min-h-28">
                 {human.hand.map((card, i) => {
                   const isDrawnFromDiscard = game.drawnFromDiscard && game.drawnCard?.id === card.id;
                   const canPick = canDiscard && !isDrawnFromDiscard;
@@ -642,7 +649,7 @@ export default function GameBoard({ playerName, numBots, onExit }: Props) {
               </div>
 
               {/* Turn guide + actions */}
-              <div className="flex flex-wrap items-center justify-center gap-3 mt-2">
+              <div className="flex flex-wrap items-center justify-center gap-2 sm:gap-3 sm:mt-2">
                 <div className="flex items-center gap-1.5 text-[11px] uppercase tracking-widest">
                   {(['draw', 'discard'] as const).map((phase, i) => {
                     const on = isHumanTurn && game.turnPhase === phase;
@@ -673,7 +680,7 @@ export default function GameBoard({ playerName, numBots, onExit }: Props) {
                 )}
               </div>
 
-              <p className="text-white/40 text-xs h-4">
+              <p className="hidden sm:block text-white/40 text-xs h-4">
                 {canDraw ? 'Draw from the stock or discard pile — or knock.'
                   : canDiscard ? 'Choose a card to discard.'
                   : isHumanTurn || game.roundOver ? '' : `Waiting for ${currentPlayerName}…`}
